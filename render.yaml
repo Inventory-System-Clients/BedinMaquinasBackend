@@ -22,6 +22,8 @@ services:
         value: admin@agarramais.com
       - key: ADMIN_PASSWORD
         sync: false
+      - key: FRONTEND_URL
+        value: https://bedin-maquinas-frontend.vercel.app
 
 databases:
   - name: agarra-mais-db

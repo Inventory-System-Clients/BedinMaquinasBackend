@@ -29,6 +29,7 @@ const allowedOrigins = [
   "http://localhost:5173",
   "http://localhost:3000",
   "http://localhost:5174",
+  "https://bedin-maquinas-frontend.vercel.app",
   "https://agarramaisop.selfmachine.com.br",
   "https://clubekids.selfmachine.com.br",
   process.env.FRONTEND_URL,
