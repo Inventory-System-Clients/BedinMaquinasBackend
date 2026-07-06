@@ -42,7 +42,7 @@ export const registrarMovimentacao = async (req, res) => {
       valorEntradaNotas,
       valorEntradaCartao,
       roteiroId,
-      numeroBag, // NOVO: número da bag
+      numeroSacola, // opcional: identificação livre da sacola de dinheiro
     } = req.body;
 
     // Validações
@@ -106,8 +106,9 @@ export const registrarMovimentacao = async (req, res) => {
       });
     }
 
-    // Se tem numeroBag, valores financeiros são opcionais (pendentes)
-    const statusFinanceiro = numeroBag ? "pendente" : "concluido";
+    // Sacola pendente automática: sempre que houver dinheiro em espécie retirado
+    const statusFinanceiro =
+      Number(valorEntradaNotas) > 0 ? "pendente" : "concluido";
 
     // Buscar máquina para pegar valorFicha
     const maquina = await Maquina.findByPk(maquinaId);
@@ -320,8 +321,8 @@ export const registrarMovimentacao = async (req, res) => {
       valorEntradaNotas: valorEntradaNotas ?? null,
       valorEntradaCartao: valorEntradaCartao ?? null,
       roteiroId: roteiroId || null,
-      // Gestão Financeira - Bag
-      numeroBag: numeroBag || null,
+      // Gestão Financeira - Sacola
+      numeroSacola: numeroSacola || null,
       statusFinanceiro,
     }, lockTransaction ? { transaction: lockTransaction } : undefined);
 
@@ -771,6 +772,16 @@ export const atualizarMovimentacao = async (req, res) => {
           : movimentacao.valorEntradaCartao,
     };
 
+    // Reabrir automaticamente como pendente no financeiro se dinheiro em
+    // espécie foi informado/alterado numa movimentação já concluída
+    if (
+      valorEntradaNotas !== undefined &&
+      Number(updateData.valorEntradaNotas) > 0 &&
+      movimentacao.statusFinanceiro === "concluido"
+    ) {
+      updateData.statusFinanceiro = "pendente";
+    }
+
     // Se fichas, notas ou digital foram atualizados, recalcular o valorFaturado
     if (
       fichas !== undefined ||
@@ -891,9 +902,58 @@ export const atualizarValoresFinanceiros = async (req, res) => {
       statusFinanceiro: "concluido",
     });
 
+    // Fechamento automático na Machine Pay (best-effort, nunca bloqueia a
+    // conclusão do registro financeiro local)
+    let machinePayFechamento = { executado: false, concluido: false, erro: null };
+
+    if (maquina?.machinePayPosId) {
+      try {
+        const movimentacaoAnterior = await Movimentacao.findOne({
+          where: {
+            maquinaId: movimentacao.maquinaId,
+            dataColeta: { [Op.lt]: movimentacao.dataColeta },
+          },
+          order: [["dataColeta", "DESC"]],
+        });
+
+        if (!movimentacaoAnterior) {
+          machinePayFechamento.erro =
+            "Sem movimentação anterior desta máquina para determinar o período de fechamento";
+        } else {
+          const { fecharFechamentoMachinePay } = await import(
+            "../services/machinePayService.js"
+          );
+
+          const resultadoFechamento = await fecharFechamentoMachinePay({
+            posId: maquina.machinePayPosId,
+            inicio: movimentacaoAnterior.dataColeta,
+            fim: movimentacao.dataColeta,
+            valor: Number(valorEntradaNotas) || 0,
+          });
+
+          machinePayFechamento = {
+            executado: true,
+            concluido: resultadoFechamento.concluido,
+            erro: null,
+          };
+        }
+      } catch (machinePayError) {
+        console.error(
+          "[MachinePay] Erro ao executar fechamento:",
+          machinePayError,
+        );
+        machinePayFechamento = {
+          executado: true,
+          concluido: false,
+          erro: machinePayError.message,
+        };
+      }
+    }
+
     res.json({
       message: "Valores financeiros atualizados com sucesso",
       movimentacao,
+      machinePayFechamento,
     });
   } catch (error) {
     console.error("Erro ao atualizar valores financeiros:", error);

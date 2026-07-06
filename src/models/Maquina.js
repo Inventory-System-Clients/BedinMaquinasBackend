@@ -118,6 +118,19 @@ const Maquina = sequelize.define(
       type: DataTypes.BOOLEAN,
       defaultValue: true,
     },
+    machinePayPosId: {
+      type: DataTypes.STRING(50),
+      allowNull: true,
+      unique: true,
+      field: "machine_pay_pos_id",
+      comment: "ID do POS (leitor PIX/cartão) cadastrado no painel Machine Pay",
+    },
+    machinePayUsrId: {
+      type: DataTypes.STRING(50),
+      allowNull: true,
+      field: "machine_pay_usr_id",
+      comment: "ID da conta/cliente dona do posId no painel Machine Pay",
+    },
   },
   {
     tableName: "maquinas",

@@ -100,6 +100,8 @@ export const criarMaquina = async (req, res) => {
       percentualAlertaEstoque,
       percentualComissao,
       localizacao,
+      machinePayPosId,
+      machinePayUsrId,
     } = req.body;
 
     if (!codigo || !lojaId) {
@@ -112,6 +114,18 @@ export const criarMaquina = async (req, res) => {
     const maquinaExistente = await Maquina.findOne({ where: { codigo } });
     if (maquinaExistente) {
       return res.status(400).json({ error: "Código de máquina já existe" });
+    }
+
+    // Verificar se posId da Machine Pay já está em uso por outra máquina
+    if (machinePayPosId) {
+      const posIdExistente = await Maquina.findOne({
+        where: { machinePayPosId },
+      });
+      if (posIdExistente) {
+        return res
+          .status(400)
+          .json({ error: "Este ID da Machine Pay já está em uso por outra máquina" });
+      }
     }
 
     const maquina = await Maquina.create({
@@ -129,6 +143,8 @@ export const criarMaquina = async (req, res) => {
       percentualAlertaEstoque: percentualAlertaEstoque || 30,
       percentualComissao: percentualComissao || 0,
       localizacao,
+      machinePayPosId: machinePayPosId || null,
+      machinePayUsrId: machinePayUsrId || null,
     });
 
     res.locals.entityId = maquina.id;
@@ -164,6 +180,8 @@ export const atualizarMaquina = async (req, res) => {
       percentualComissao,
       localizacao,
       ativo,
+      machinePayPosId,
+      machinePayUsrId,
     } = req.body;
 
     // Verificar se novo código já existe em outra máquina
@@ -171,6 +189,18 @@ export const atualizarMaquina = async (req, res) => {
       const maquinaExistente = await Maquina.findOne({ where: { codigo } });
       if (maquinaExistente) {
         return res.status(400).json({ error: "Código de máquina já existe" });
+      }
+    }
+
+    // Verificar se novo posId da Machine Pay já está em uso por outra máquina
+    if (machinePayPosId && machinePayPosId !== maquina.machinePayPosId) {
+      const posIdExistente = await Maquina.findOne({
+        where: { machinePayPosId },
+      });
+      if (posIdExistente) {
+        return res
+          .status(400)
+          .json({ error: "Este ID da Machine Pay já está em uso por outra máquina" });
       }
     }
 
@@ -191,6 +221,8 @@ export const atualizarMaquina = async (req, res) => {
       percentualComissao: percentualComissao ?? maquina.percentualComissao,
       localizacao: localizacao ?? maquina.localizacao,
       ativo: ativo ?? maquina.ativo,
+      machinePayPosId: machinePayPosId ?? maquina.machinePayPosId,
+      machinePayUsrId: machinePayUsrId ?? maquina.machinePayUsrId,
     });
 
     res.json(maquina);

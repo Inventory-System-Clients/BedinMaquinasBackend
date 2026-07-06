@@ -133,11 +133,12 @@ const Movimentacao = sequelize.define(
       field: "valor_entrada_cartao",
       comment: "Valor de pagamento digital - cartão/pix (R$)",
     },
-    numeroBag: {
+    numeroSacola: {
       type: DataTypes.STRING(50),
       allowNull: true,
       field: "numero_bag",
-      comment: "Número da bag quando dinheiro é levado para contar depois",
+      comment:
+        "Identificação opcional da sacola de dinheiro (não determina mais o status financeiro)",
     },
     statusFinanceiro: {
       type: DataTypes.ENUM("pendente", "concluido"),
