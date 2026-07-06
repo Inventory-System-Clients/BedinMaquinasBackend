@@ -7,6 +7,7 @@ import {
   deletarMovimentacao,
   listarPendentesFinanceiro,
   atualizarValoresFinanceiros,
+  buscarValorDigitalMachinePay,
 } from "../controllers/movimentacaoController.js";
 import {
   autenticar,
@@ -36,6 +37,12 @@ router.put(
   autenticar,
   registrarLog("ATUALIZAR_VALORES_FINANCEIROS", "Movimentacao"),
   atualizarValoresFinanceiros
+);
+router.post(
+  "/:id/machine-pay/valor-digital",
+  autenticar,
+  registrarLog("MACHINEPAY_BUSCAR_VALOR_DIGITAL", "Movimentacao"),
+  buscarValorDigitalMachinePay
 );
 router.delete(
   "/:id",

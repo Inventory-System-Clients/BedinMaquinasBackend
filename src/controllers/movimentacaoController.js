@@ -141,7 +141,24 @@ export const registrarMovimentacao = async (req, res) => {
       ? ultimaMov.dataColeta
       : machinePayDataInicio || null;
 
-    if (maquina.machinePayPosId && inicioConsultaDigital) {
+    console.log("[MachinePay] Verificando busca automática do valor digital:", {
+      maquinaId,
+      machinePayPosId: maquina.machinePayPosId || "(não configurado)",
+      temMovimentacaoAnterior: Boolean(ultimaMov),
+      machinePayDataInicio: machinePayDataInicio || null,
+      inicioConsultaDigital,
+      fim: dataColetaFinal,
+    });
+
+    if (!maquina.machinePayPosId) {
+      console.log(
+        "[MachinePay] Pulando busca: máquina não possui machinePayPosId configurado.",
+      );
+    } else if (!inicioConsultaDigital) {
+      console.log(
+        "[MachinePay] Pulando busca: não há movimentação anterior e machinePayDataInicio não foi informado.",
+      );
+    } else {
       try {
         const { consultarFechamentoMachinePay } = await import(
           "../services/machinePayService.js"
@@ -152,10 +169,15 @@ export const registrarMovimentacao = async (req, res) => {
           fim: dataColetaFinal,
         });
         valorEntradaCartao = fechamentoDigital.cartaoPix;
+        console.log(
+          "[MachinePay] Valor digital buscado com sucesso:",
+          valorEntradaCartao,
+        );
       } catch (machinePayError) {
         console.error(
           "[MachinePay] Erro ao buscar valor digital automático:",
-          machinePayError,
+          machinePayError.message,
+          machinePayError.stack,
         );
       }
     }
@@ -1012,5 +1034,99 @@ export const atualizarValoresFinanceiros = async (req, res) => {
   } catch (error) {
     console.error("Erro ao atualizar valores financeiros:", error);
     res.status(500).json({ error: "Erro ao atualizar valores financeiros" });
+  }
+};
+
+// POST /api/movimentacoes/:id/machine-pay/valor-digital
+// Busca (ou refaz a busca) do valor digital (PIX/cartão) na Machine Pay para
+// uma movimentação específica. Usado tanto pelo botão "refazer busca" quanto,
+// quando não há movimentação anterior, junto com uma data de início escolhida
+// pelo usuário (body: { inicio }).
+export const buscarValorDigitalMachinePay = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { inicio: inicioManual } = req.body || {};
+
+    const movimentacao = await Movimentacao.findByPk(id);
+    if (!movimentacao) {
+      return res.status(404).json({ error: "Movimentação não encontrada" });
+    }
+
+    const maquina = await Maquina.findByPk(movimentacao.maquinaId);
+    if (!maquina) {
+      return res.status(404).json({ error: "Máquina não encontrada" });
+    }
+
+    if (!maquina.machinePayPosId) {
+      return res.status(400).json({
+        error:
+          "Esta máquina não possui ID da Machine Pay (machinePayPosId) configurado.",
+      });
+    }
+
+    const movimentacaoAnterior = await Movimentacao.findOne({
+      where: {
+        maquinaId: movimentacao.maquinaId,
+        dataColeta: { [Op.lt]: movimentacao.dataColeta },
+      },
+      order: [["dataColeta", "DESC"]],
+    });
+
+    const inicio = movimentacaoAnterior
+      ? movimentacaoAnterior.dataColeta
+      : inicioManual;
+
+    console.log("[MachinePay] Busca manual de valor digital solicitada:", {
+      movimentacaoId: id,
+      maquinaId: movimentacao.maquinaId,
+      machinePayPosId: maquina.machinePayPosId,
+      temMovimentacaoAnterior: Boolean(movimentacaoAnterior),
+      inicioManualInformado: inicioManual || null,
+      inicioUsado: inicio || null,
+      fim: movimentacao.dataColeta,
+    });
+
+    if (!inicio) {
+      return res.status(400).json({
+        error:
+          "Não há movimentação anterior desta máquina para calcular o período automaticamente. Informe uma data de início.",
+        precisaDataInicio: true,
+      });
+    }
+
+    const { consultarFechamentoMachinePay } = await import(
+      "../services/machinePayService.js"
+    );
+
+    const fechamento = await consultarFechamentoMachinePay({
+      posId: maquina.machinePayPosId,
+      inicio,
+      fim: movimentacao.dataColeta,
+    });
+
+    await movimentacao.update({ valorEntradaCartao: fechamento.cartaoPix });
+
+    console.log(
+      "[MachinePay] Valor digital atualizado via busca manual:",
+      fechamento.cartaoPix,
+    );
+
+    res.json({
+      movimentacaoId: movimentacao.id,
+      inicio,
+      fim: movimentacao.dataColeta,
+      valorEntradaCartao: fechamento.cartaoPix,
+      fechamento,
+    });
+  } catch (error) {
+    console.error(
+      "[MachinePay] Erro ao buscar valor digital manualmente:",
+      error.message,
+      error.stack,
+    );
+    res.status(502).json({
+      error:
+        error.message || "Não foi possível buscar o valor digital na Machine Pay.",
+    });
   }
 };

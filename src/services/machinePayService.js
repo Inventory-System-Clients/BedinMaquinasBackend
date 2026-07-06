@@ -203,10 +203,21 @@ const buildFechamentoUrl = ({ posId, inicio, fim, valor = 0 }) => {
   );
 };
 
+const log = (...args) => console.log("[MachinePay]", ...args);
+const logErro = (...args) => console.error("[MachinePay]", ...args);
+
 const login = async () => {
   const loginUrl = process.env.MACHINE_PAY_LOGIN_URL || DEFAULT_LOGIN_URL;
+  log("Iniciando login em", loginUrl);
+
   const initialResponse = await fetch(loginUrl, { redirect: "manual" });
   let cookies = extractCookies(initialResponse);
+  log(
+    "GET inicial - status:",
+    initialResponse.status,
+    "- cookies recebidos:",
+    cookies ? cookies.split(";").length : 0,
+  );
 
   const url = new URL("index.php", loginUrl);
   url.searchParams.set("acao", "login");
@@ -226,10 +237,19 @@ const login = async () => {
   cookies = mergeCookies(cookies, extractCookies(loginResponse));
   const body = await loginResponse.text();
 
+  log("GET login - status:", loginResponse.status, "- tamanho resposta:", body.length);
+
   if (!loginResponse.ok || /senha|login incorreto|acesso negado/i.test(body)) {
+    logErro(
+      "Falha ao autenticar - status:",
+      loginResponse.status,
+      "- trecho da resposta:",
+      body.slice(0, 200),
+    );
     throw new Error("Falha ao autenticar na Machine Pay");
   }
 
+  log("Login concluído com sucesso");
   return { cookies, loginUrl };
 };
 
@@ -270,6 +290,7 @@ const replaceMachinePayTokens = ({
 
 const fetchMachinePay = async (url, options = {}) => {
   const { cookies, loginUrl } = await login();
+  log("Requisição:", options.method || "GET", url);
   const response = await fetch(url, {
     method: options.method || "GET",
     headers: {
@@ -282,8 +303,10 @@ const fetchMachinePay = async (url, options = {}) => {
     body: options.body,
   });
   const body = await response.text();
+  log("Resposta:", response.status, "- tamanho:", body.length);
 
   if (!response.ok) {
+    logErro(`Status inesperado (${response.status}) em`, url);
     throw new Error(`Machine Pay respondeu com status ${response.status}`);
   }
 
@@ -403,8 +426,10 @@ export const consultarFechamentoMachinePay = async ({
   inicio,
   fim,
 }) => {
+  log("consultarFechamentoMachinePay - posId:", posId, "- período:", inicio, "->", fim);
   const { cookies, loginUrl } = await login();
   const url = buildStatsUrl({ posId, inicio, fim });
+  log("URL de stats:", url);
   const response = await fetch(url, {
     headers: {
       Accept: "*/*",
@@ -414,12 +439,24 @@ export const consultarFechamentoMachinePay = async ({
     },
   });
   const body = await response.text();
+  log("Resposta stats - status:", response.status, "- tamanho:", body.length);
 
   if (!response.ok) {
+    logErro(`consultarFechamentoMachinePay - status inesperado ${response.status}`);
     throw new Error(`Machine Pay respondeu com status ${response.status}`);
   }
 
-  return parseStats(body);
+  try {
+    const resultado = parseStats(body);
+    log("Fechamento calculado:", resultado);
+    return resultado;
+  } catch (parseError) {
+    logErro(
+      "Erro ao parsear stats - trecho da resposta (primeiros 500 chars):",
+      body.slice(0, 500),
+    );
+    throw parseError;
+  }
 };
 
 export const fecharFechamentoMachinePay = async ({
@@ -456,7 +493,10 @@ export const fecharFechamentoMachinePay = async ({
 let _adminUsrCache = null;
 
 const descobrirAdminUsr = async () => {
-  if (_adminUsrCache) return _adminUsrCache;
+  if (_adminUsrCache) {
+    log("descobrirAdminUsr - usando cache:", _adminUsrCache);
+    return _adminUsrCache;
+  }
   const loginUrl = process.env.MACHINE_PAY_LOGIN_URL || DEFAULT_LOGIN_URL;
   try {
     const { body } = await fetchMachinePay(
@@ -466,9 +506,17 @@ const descobrirAdminUsr = async () => {
     const match = body.match(/copiarDadosMaquina\((\d{10,20})/);
     if (match) {
       _adminUsrCache = match[1];
+      log("descobrirAdminUsr - encontrado via copiarDadosMaquina:", _adminUsrCache);
       return _adminUsrCache;
     }
-  } catch {}
+    log(
+      "descobrirAdminUsr - padrão copiarDadosMaquina não encontrado na resposta (tamanho:",
+      body.length,
+      "). O HTML dessa conta pode usar outra função/estrutura.",
+    );
+  } catch (error) {
+    logErro("descobrirAdminUsr - erro:", error.message);
+  }
   return null;
 };
 
@@ -476,15 +524,21 @@ const buscarStatusViaFiltro = async ({ usrId, posId }) => {
   const loginUrl = process.env.MACHINE_PAY_LOGIN_URL || DEFAULT_LOGIN_URL;
   const chave = Buffer.from(String(posId), "utf8").toString("base64");
   const url = `${loginUrl}maquinas.php?acao=filtro&idusr=${usrId}&chave=${encodeURIComponent(chave)}`;
+  log("buscarStatusViaFiltro - usrId:", usrId, "- posId:", posId);
   const { body } = await fetchMachinePay(url, {
     headers: { "X-Requested-With": "XMLHttpRequest" },
   });
   if (!body.includes(String(posId)) && !body.includes("maq_on") && !body.includes("maq_off")) {
+    log(
+      "buscarStatusViaFiltro - posId não reconhecido para este usrId (resposta não contém o posId nem maq_on/maq_off)",
+    );
     return null;
   }
   const offline = body.includes("maq_off");
   const online = body.includes("maq_on") && !offline;
-  return { online: online && !offline, status: offline ? "offline" : online ? "online" : "desconhecido" };
+  const resultado = { online: online && !offline, status: offline ? "offline" : online ? "online" : "desconhecido" };
+  log("buscarStatusViaFiltro - resultado:", resultado);
+  return resultado;
 };
 
 export const descobrirUsrDePosId = async ({ posId }) => {
@@ -493,17 +547,35 @@ export const descobrirUsrDePosId = async ({ posId }) => {
     .map((s) => s.trim())
     .filter(Boolean);
 
+  log(
+    "descobrirUsrDePosId - posId:",
+    posId,
+    "- usrIds configurados em MACHINE_PAY_USR:",
+    usrIds.length ? usrIds.join(", ") : "(nenhum)",
+  );
+
   for (const usrId of usrIds) {
     const resultado = await buscarStatusViaFiltro({ usrId, posId });
-    if (resultado) return { usrId, ...resultado };
+    if (resultado) {
+      log("descobrirUsrDePosId - encontrado via MACHINE_PAY_USR:", usrId);
+      return { usrId, ...resultado };
+    }
   }
 
   const adminUsr = await descobrirAdminUsr();
   if (adminUsr) {
     const resultado = await buscarStatusViaFiltro({ usrId: adminUsr, posId });
-    if (resultado) return { usrId: adminUsr, ...resultado };
+    if (resultado) {
+      log("descobrirUsrDePosId - encontrado via admin usr:", adminUsr);
+      return { usrId: adminUsr, ...resultado };
+    }
   }
 
+  log(
+    "descobrirUsrDePosId - não foi possível descobrir o usrId para posId:",
+    posId,
+    "- configure MACHINE_PAY_USR no .env com o(s) usrId(s) da conta, ou verifique se o posId está correto.",
+  );
   return null;
 };
 

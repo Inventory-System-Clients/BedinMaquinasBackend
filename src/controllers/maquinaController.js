@@ -1,5 +1,24 @@
 import { Maquina, Loja, Movimentacao } from "../models/index.js";
 
+// Tenta descobrir automaticamente o usrId (conta dona do posId) na Machine Pay.
+// Best-effort: nunca bloqueia o salvamento da máquina se falhar.
+const descobrirMachinePayUsrId = async (posId) => {
+  if (!posId) return null;
+  try {
+    const { descobrirUsrDePosId } = await import(
+      "../services/machinePayService.js"
+    );
+    const resultado = await descobrirUsrDePosId({ posId });
+    return resultado?.usrId || null;
+  } catch (error) {
+    console.error(
+      "[MachinePay] Erro ao descobrir usrId automaticamente:",
+      error,
+    );
+    return null;
+  }
+};
+
 // US05 - Listar máquinas
 export const listarMaquinas = async (req, res) => {
   try {
@@ -128,6 +147,12 @@ export const criarMaquina = async (req, res) => {
       }
     }
 
+    // Se um posId foi informado sem usrId, tenta descobrir automaticamente
+    const machinePayUsrIdFinal =
+      machinePayPosId && !machinePayUsrId
+        ? await descobrirMachinePayUsrId(machinePayPosId)
+        : machinePayUsrId || null;
+
     const maquina = await Maquina.create({
       codigo,
       nome,
@@ -144,7 +169,7 @@ export const criarMaquina = async (req, res) => {
       percentualComissao: percentualComissao || 0,
       localizacao,
       machinePayPosId: machinePayPosId || null,
-      machinePayUsrId: machinePayUsrId || null,
+      machinePayUsrId: machinePayUsrIdFinal,
     });
 
     res.locals.entityId = maquina.id;
@@ -204,6 +229,16 @@ export const atualizarMaquina = async (req, res) => {
       }
     }
 
+    // Se um posId novo/alterado foi informado sem usrId explícito, tenta
+    // descobrir automaticamente o usrId dono desse posId na Machine Pay
+    const posIdMudou =
+      machinePayPosId !== undefined && machinePayPosId !== maquina.machinePayPosId;
+    const machinePayUsrIdFinal =
+      posIdMudou && machinePayPosId && !machinePayUsrId
+        ? (await descobrirMachinePayUsrId(machinePayPosId)) ??
+          maquina.machinePayUsrId
+        : machinePayUsrId ?? maquina.machinePayUsrId;
+
     await maquina.update({
       codigo: codigo ?? maquina.codigo,
       nome: nome ?? maquina.nome,
@@ -222,7 +257,7 @@ export const atualizarMaquina = async (req, res) => {
       localizacao: localizacao ?? maquina.localizacao,
       ativo: ativo ?? maquina.ativo,
       machinePayPosId: machinePayPosId ?? maquina.machinePayPosId,
-      machinePayUsrId: machinePayUsrId ?? maquina.machinePayUsrId,
+      machinePayUsrId: machinePayUsrIdFinal,
     });
 
     res.json(maquina);
