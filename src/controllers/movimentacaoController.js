@@ -45,6 +45,9 @@ export const registrarMovimentacao = async (req, res) => {
       roteiroId,
       // numeroSacola NÃO vem mais do body: é gerado automaticamente
       // como "Sacola - {nome da máquina}" logo abaixo
+      // Só é usado quando esta é a primeira movimentação da máquina (sem
+      // movimentação anterior para calcular o período automaticamente)
+      machinePayDataInicio,
     } = req.body;
 
     // Validações
@@ -127,15 +130,25 @@ export const registrarMovimentacao = async (req, res) => {
     // cobrindo o período desde a última movimentação desta máquina até agora.
     // Nunca é digitado manualmente. Best-effort: se a máquina não tiver
     // integração ou a consulta falhar, fica null (não bloqueia a movimentação).
+    //
+    // Se não houver movimentação anterior (primeira coleta desta máquina),
+    // não há um período de referência automático — nesse caso o início do
+    // período precisa vir explicitamente em `machinePayDataInicio` (o
+    // frontend deve perguntar essa data ao usuário quando
+    // `machinePayPrecisaDataInicio` vier true em GET /maquinas/:id/estoque-atual).
     let valorEntradaCartao = null;
-    if (maquina.machinePayPosId && ultimaMov) {
+    const inicioConsultaDigital = ultimaMov
+      ? ultimaMov.dataColeta
+      : machinePayDataInicio || null;
+
+    if (maquina.machinePayPosId && inicioConsultaDigital) {
       try {
         const { consultarFechamentoMachinePay } = await import(
           "../services/machinePayService.js"
         );
         const fechamentoDigital = await consultarFechamentoMachinePay({
           posId: maquina.machinePayPosId,
-          inicio: ultimaMov.dataColeta,
+          inicio: inicioConsultaDigital,
           fim: dataColetaFinal,
         });
         valorEntradaCartao = fechamentoDigital.cartaoPix;

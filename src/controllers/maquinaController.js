@@ -318,6 +318,13 @@ export const obterEstoqueAtual = async (req, res) => {
       estoqueMinimo,
       alertaEstoqueBaixo: estoqueAtual < estoqueMinimo,
       ultimaAtualizacao: ultimaMovimentacao?.dataColeta,
+      // Se true, esta é a primeira movimentação da máquina e ela tem Machine Pay
+      // configurada: o frontend deve perguntar ao usuário desde qual data buscar
+      // o valor digital (não há movimentação anterior para calcular o período
+      // automaticamente) e enviar em `machinePayDataInicio` no POST de movimentação.
+      machinePayPrecisaDataInicio: Boolean(
+        maquina.machinePayPosId && !ultimaMovimentacao,
+      ),
     });
   } catch (error) {
     console.error("❌ [obterEstoqueAtual] Erro ao obter estoque:", error);
