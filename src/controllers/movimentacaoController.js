@@ -40,9 +40,11 @@ export const registrarMovimentacao = async (req, res) => {
       // NOVOS CAMPOS DE VALORES DE ENTRADA
       valorEntradaFichas,
       valorEntradaNotas,
-      valorEntradaCartao,
+      // valorEntradaCartao NÃO vem mais do body: é calculado automaticamente
+      // via Machine Pay logo abaixo (ver busca de "valor digital automático")
       roteiroId,
-      numeroSacola, // opcional: identificação livre da sacola de dinheiro
+      // numeroSacola NÃO vem mais do body: é gerado automaticamente
+      // como "Sacola - {nome da máquina}" logo abaixo
     } = req.body;
 
     // Validações
@@ -114,6 +116,35 @@ export const registrarMovimentacao = async (req, res) => {
     const maquina = await Maquina.findByPk(maquinaId);
     if (!maquina) {
       return res.status(404).json({ error: "Máquina não encontrada" });
+    }
+
+    const dataColetaFinal = dataColeta || new Date();
+
+    // Sacola: identificação automática, não editável pelo usuário
+    const numeroSacola = `Sacola - ${maquina.nome || maquina.codigo}`;
+
+    // Valor digital (cartão/PIX): buscado automaticamente da Machine Pay,
+    // cobrindo o período desde a última movimentação desta máquina até agora.
+    // Nunca é digitado manualmente. Best-effort: se a máquina não tiver
+    // integração ou a consulta falhar, fica null (não bloqueia a movimentação).
+    let valorEntradaCartao = null;
+    if (maquina.machinePayPosId && ultimaMov) {
+      try {
+        const { consultarFechamentoMachinePay } = await import(
+          "../services/machinePayService.js"
+        );
+        const fechamentoDigital = await consultarFechamentoMachinePay({
+          posId: maquina.machinePayPosId,
+          inicio: ultimaMov.dataColeta,
+          fim: dataColetaFinal,
+        });
+        valorEntradaCartao = fechamentoDigital.cartaoPix;
+      } catch (machinePayError) {
+        console.error(
+          "[MachinePay] Erro ao buscar valor digital automático:",
+          machinePayError,
+        );
+      }
     }
 
     // VERIFICAR BLOQUEIO DE LOJA
@@ -301,7 +332,7 @@ export const registrarMovimentacao = async (req, res) => {
       maquinaId,
       usuarioId: req.usuario.id,
       lojaId: maquina.lojaId,
-      dataColeta: dataColeta || new Date(),
+      dataColeta: dataColetaFinal,
       totalPre,
       sairam: saidaRecalculada,
       abastecidas,
@@ -319,10 +350,11 @@ export const registrarMovimentacao = async (req, res) => {
       // Novos campos de valores de entrada
       valorEntradaFichas: valorEntradaFichas ?? null,
       valorEntradaNotas: valorEntradaNotas ?? null,
-      valorEntradaCartao: valorEntradaCartao ?? null,
+      // valorEntradaCartao é o valor buscado automaticamente da Machine Pay acima
+      valorEntradaCartao,
       roteiroId: roteiroId || null,
-      // Gestão Financeira - Sacola
-      numeroSacola: numeroSacola || null,
+      // Gestão Financeira - Sacola (identificação automática, não editável)
+      numeroSacola,
       statusFinanceiro,
     }, lockTransaction ? { transaction: lockTransaction } : undefined);
 
@@ -886,18 +918,27 @@ export const atualizarValoresFinanceiros = async (req, res) => {
     // Buscar máquina para recalcular valorFaturado
     const maquina = await Maquina.findByPk(movimentacao.maquinaId);
 
+    // valorEntradaCartao já vem preenchido automaticamente desde a criação da
+    // movimentação (buscado da Machine Pay). Só sobrescreve se vier explícito
+    // no body (permite ajuste manual em caso de divergência); caso contrário
+    // mantém o valor automático já salvo.
+    const valorEntradaCartaoFinal =
+      valorEntradaCartao !== undefined
+        ? valorEntradaCartao
+        : movimentacao.valorEntradaCartao;
+
     // Recalcular valor faturado
     const valorFaturado =
       (movimentacao.fichas
         ? movimentacao.fichas * parseFloat(maquina.valorFicha)
         : 0) +
       (valorEntradaNotas ? parseFloat(valorEntradaNotas) : 0) +
-      (valorEntradaCartao ? parseFloat(valorEntradaCartao) : 0);
+      (valorEntradaCartaoFinal ? parseFloat(valorEntradaCartaoFinal) : 0);
 
     await movimentacao.update({
       valorEntradaFichas: valorEntradaFichas ?? null,
       valorEntradaNotas: valorEntradaNotas ?? null,
-      valorEntradaCartao: valorEntradaCartao ?? null,
+      valorEntradaCartao: valorEntradaCartaoFinal ?? null,
       valorFaturado,
       statusFinanceiro: "concluido",
     });
