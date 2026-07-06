@@ -121,9 +121,19 @@ const parseStats = (html) => {
   };
 };
 
-const formatInicio = (value) => String(value || "").slice(0, 10);
+// Objetos Date do JS/Sequelize (ex: movimentacao.dataColeta) NÃO podem passar
+// por String() diretamente: isso gera "Mon Jul 06 2026 ..." (Date.toString()),
+// não uma data ISO, e a Machine Pay não reconhece esse formato - a consulta
+// silenciosamente retorna 0 resultados em vez de erro. Sempre normaliza para
+// ISO primeiro.
+const paraTextoIso = (value) => {
+  if (value instanceof Date) return value.toISOString();
+  return String(value || "");
+};
+
+const formatInicio = (value) => paraTextoIso(value).slice(0, 10);
 const formatFim = (value) => {
-  const texto = String(value || "");
+  const texto = paraTextoIso(value);
   if (/^\d{4}-\d{2}-\d{2}$/.test(texto)) {
     return `${texto}T23:59`;
   }
