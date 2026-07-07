@@ -695,16 +695,23 @@ export const listarRoteiros = async (req, res) => {
       });
     }
     // Resetar status para pendente se necessário
+    // "excluido" NÃO entra aqui: é o status usado quando o usuário exclui
+    // manualmente uma bolinha, e não deve ser revertido para pendente.
     for (const bolinha of bolinhas) {
-      if (!["pendente", "em_andamento", "concluido"].includes(bolinha.status)) {
+      if (
+        !["pendente", "em_andamento", "concluido", "excluido"].includes(
+          bolinha.status,
+        )
+      ) {
         bolinha.status = "pendente";
         await bolinha.save();
       }
     }
     // Adicionar bolinhas ao array de roteiros (se já não estiverem)
+    // Bolinhas com status "excluido" ficam de fora da listagem.
     const roteirosIds = new Set(roteiros.map(r => r.id));
     for (const bolinha of bolinhas) {
-      if (!roteirosIds.has(bolinha.id)) {
+      if (!roteirosIds.has(bolinha.id) && bolinha.status !== "excluido") {
         roteiros.push(bolinha);
       }
     }
@@ -2254,6 +2261,9 @@ export const deletarRoteiro = async (req, res) => {
 
     // Se force=true, permitir deletar mesmo em andamento ou concluído
     if (roteiro.status !== "pendente" && force !== "true") {
+      console.warn(
+        `⚠️ Exclusão de roteiro ${id} bloqueada: status="${roteiro.status}" (envie ?force=true para forçar)`,
+      );
       await transaction.rollback();
       return res.status(400).json({
         error: "Apenas roteiros pendentes podem ser deletados. Use force=true para forçar a exclusão.",
@@ -2291,11 +2301,34 @@ export const deletarRoteiro = async (req, res) => {
     });
 
     // 5. Deletar roteiro
-    await roteiro.destroy({ transaction });
+    // Roteiros "Bolinha N" são mantidos via soft-delete (status "excluido")
+    // em vez de apagados de verdade: a listagem sempre garante 20 bolinhas
+    // pendentes por dia, e se a linha fosse apagada de vez ela seria
+    // recriada automaticamente na próxima consulta. Marcando como
+    // "excluido", a listagem sabe que essa zona já foi tratada e não deve
+    // recriá-la nem exibi-la.
+    const ehRoteiroBolinha = /^bolinha\s+\d+$/i.test(roteiro.zona || "");
+
+    if (ehRoteiroBolinha) {
+      await roteiro.update(
+        {
+          status: "excluido",
+          funcionarioId: null,
+          funcionarioNome: null,
+          totalMaquinas: 0,
+          maquinasConcluidas: 0,
+        },
+        { transaction },
+      );
+    } else {
+      await roteiro.destroy({ transaction });
+    }
 
     await transaction.commit();
 
-    console.log(`✅ Roteiro ${id} deletado com sucesso`);
+    console.log(
+      `✅ Roteiro ${id} ${ehRoteiroBolinha ? "marcado como excluído (bolinha)" : "deletado"} com sucesso`,
+    );
 
     res.json({
       message: "Roteiro deletado com sucesso",
