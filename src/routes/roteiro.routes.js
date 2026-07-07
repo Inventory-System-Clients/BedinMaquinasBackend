@@ -2,6 +2,7 @@ import express from "express";
 import {
   listarRoteiros,
   gerarRoteiros,
+  criarRoteiroManual,
   criarRoteiroCoringa,
   obterRoteiro,
   listarLojasDoRoteiro,
@@ -70,6 +71,10 @@ router.use(autenticar);
 
 // GET /api/roteiros - Lista todos os roteiros (filtrar por data opcional)
 router.get("/", cacheGet({ ttlSeconds: 20 }), listarRoteiros);
+
+// POST /api/roteiros - Criar roteiro manualmente ("roteiro fixo"), escolhendo
+// todas as informações (data, zona/estado/cidade, funcionário, lojas)
+router.post("/", clearHttpCacheOnSuccess(), criarRoteiroManual);
 
 // GET /api/roteiros/alertas/finalizados-incompletos - Alertas para ADMIN
 router.get(

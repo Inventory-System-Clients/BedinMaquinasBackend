@@ -1225,6 +1225,138 @@ export const criarRoteiroCoringa = async (req, res) => {
   }
 };
 
+// POST /api/roteiros
+// Criar roteiro manualmente ("roteiro fixo"): o usuário escolhe todas as
+// informações (data, zona/estado/cidade, funcionário responsável,
+// observações) e as lojas que farão parte dele, na ordem desejada.
+export const criarRoteiroManual = async (req, res) => {
+  const transaction = await sequelize.transaction();
+
+  try {
+    const {
+      data,
+      zona,
+      estado,
+      cidade,
+      funcionarioId,
+      observacoes,
+      saldoRestante,
+      lojaIds,
+    } = req.body;
+
+    if (!data) {
+      await transaction.rollback();
+      return res.status(400).json({ error: "data é obrigatória" });
+    }
+
+    const lojaIdsRecebidos = Array.isArray(lojaIds)
+      ? lojaIds.filter(Boolean)
+      : [];
+    const lojaIdsNormalizados = [...new Set(lojaIdsRecebidos)];
+
+    if (lojaIdsNormalizados.length !== lojaIdsRecebidos.length) {
+      await transaction.rollback();
+      return res
+        .status(400)
+        .json({ error: "lojaIds contém valores duplicados" });
+    }
+
+    let funcionarioNome = null;
+    if (funcionarioId) {
+      const funcionario = await Usuario.findByPk(funcionarioId, {
+        transaction,
+      });
+      if (!funcionario) {
+        await transaction.rollback();
+        return res.status(404).json({ error: "Funcionário não encontrado" });
+      }
+      if (funcionario.role !== "FUNCIONARIO") {
+        await transaction.rollback();
+        return res
+          .status(400)
+          .json({ error: "Usuário informado não possui role FUNCIONARIO" });
+      }
+      funcionarioNome = funcionario.nome;
+    }
+
+    if (lojaIdsNormalizados.length > 0) {
+      const lojasEncontradas = await Loja.findAll({
+        where: { id: { [Op.in]: lojaIdsNormalizados } },
+        attributes: ["id"],
+        transaction,
+      });
+
+      if (lojasEncontradas.length !== lojaIdsNormalizados.length) {
+        await transaction.rollback();
+        return res.status(404).json({
+          error: "Uma ou mais lojas informadas não foram encontradas",
+        });
+      }
+    }
+
+    const totalMaquinas = lojaIdsNormalizados.length
+      ? await Maquina.count({
+          where: { lojaId: { [Op.in]: lojaIdsNormalizados }, ativo: true },
+          transaction,
+        })
+      : 0;
+
+    const roteiro = await Roteiro.create(
+      {
+        data,
+        zona: zona || null,
+        estado: estado || null,
+        cidade: cidade || null,
+        status: "pendente",
+        funcionarioId: funcionarioId || null,
+        funcionarioNome,
+        totalMaquinas,
+        maquinasConcluidas: 0,
+        saldoRestante: saldoRestante ?? 500.0,
+        observacoes: observacoes || null,
+      },
+      { transaction },
+    );
+
+    if (lojaIdsNormalizados.length > 0) {
+      await RoteiroLoja.bulkCreate(
+        lojaIdsNormalizados.map((lojaId, index) => ({
+          roteiroId: roteiro.id,
+          lojaId,
+          ordem: index + 1,
+          concluida: false,
+        })),
+        { transaction },
+      );
+    }
+
+    await transaction.commit();
+
+    const roteiroCompleto = await Roteiro.findByPk(roteiro.id, {
+      include: [
+        {
+          model: Usuario,
+          as: "funcionario",
+          attributes: ["id", "nome", "email"],
+        },
+      ],
+    });
+
+    res.status(201).json({
+      message: "Roteiro criado com sucesso",
+      roteiro: roteiroCompleto,
+    });
+
+    salvarTemplateAutomaticamente();
+  } catch (error) {
+    await transaction.rollback();
+    console.error("Erro ao criar roteiro manualmente:", error);
+    res
+      .status(500)
+      .json({ error: "Erro ao criar roteiro", details: error.message });
+  }
+};
+
 // GET /api/roteiros/:id
 // Busca detalhes completos de um roteiro específico
 export const obterRoteiro = async (req, res) => {
