@@ -2409,29 +2409,38 @@ export async function calcularComissaoLoja(lojaId, roteiroId = null) {
     console.log(`📊 Loja ID: ${lojaId}`);
     console.log(`📊 Roteiro ID: ${roteiroId}`);
     
-    // Buscar todas as máquinas da loja
+    // Buscar todas as máquinas da loja que geram desconto para o ponto:
+    // por comissão (percentual > 0) ou por aluguel fixo
     const maquinas = await Maquina.findAll({
       where: {
         lojaId: lojaId,
         ativo: true,
-        percentualComissao: {
-          [Op.gt]: 0, // Apenas máquinas com comissão > 0
-        },
+        [Op.or]: [
+          { percentualComissao: { [Op.gt]: 0 } },
+          { tipoPagamentoLoja: "aluguel" },
+        ],
       },
     });
 
-    console.log(`📊 Máquinas com comissão encontradas: ${maquinas.length}`);
+    console.log(`📊 Máquinas com comissão/aluguel encontradas: ${maquinas.length}`);
     maquinas.forEach(m => {
-      console.log(`  - ${m.codigo}: ${m.percentualComissao}%`);
+      console.log(
+        `  - ${m.codigo}: ${
+          m.tipoPagamentoLoja === "aluguel"
+            ? `aluguel R$ ${m.valorAluguel}`
+            : `${m.percentualComissao}%`
+        }`
+      );
     });
 
     if (maquinas.length === 0) {
-      console.log("⚠️ Nenhuma máquina com comissão configurada nesta loja");
+      console.log("⚠️ Nenhuma máquina com comissão ou aluguel configurados nesta loja");
       return null;
     }
 
     let totalLucro = 0;
     let totalComissao = 0;
+    let totalAluguel = 0;
     const detalhes = [];
 
     // Para cada máquina, buscar movimentações do roteiro (ou última movimentação)
@@ -2497,33 +2506,61 @@ export async function calcularComissaoLoja(lojaId, roteiroId = null) {
       console.log(`     - Custo Produtos: R$ ${custoProdutos.toFixed(2)}`);
       console.log(`     - Lucro: R$ ${lucroMaquina.toFixed(2)}`);
 
-      // Calcular comissão da máquina
-      const percentualComissao = parseFloat(maquina.percentualComissao || 0);
-      const comissaoMaquina = (lucroMaquina * percentualComissao) / 100;
-
-      console.log(`     - Comissão (${percentualComissao}%): R$ ${comissaoMaquina.toFixed(2)}`);
-
       totalLucro += lucroMaquina;
-      totalComissao += comissaoMaquina;
 
-      detalhes.push({
-        maquinaId: maquina.id,
-        maquinaCodigo: maquina.codigo,
-        maquinaNome: maquina.nome,
-        receita: receitaTotal,
-        custo: custoProdutos,
-        lucro: lucroMaquina,
-        percentualComissao: percentualComissao,
-        comissao: comissaoMaquina,
-      });
+      const ehAluguel = maquina.tipoPagamentoLoja === "aluguel";
+
+      if (ehAluguel) {
+        // Máquina em modo aluguel: desconto é o valor fixo cadastrado
+        // (o rateio pelo período exato do relatório é feito na camada de
+        // relatório, que conhece a data de início/fim solicitada)
+        const aluguelMaquina = parseFloat(maquina.valorAluguel || 0);
+
+        console.log(`     - Aluguel fixo: R$ ${aluguelMaquina.toFixed(2)}`);
+
+        totalAluguel += aluguelMaquina;
+
+        detalhes.push({
+          maquinaId: maquina.id,
+          maquinaCodigo: maquina.codigo,
+          maquinaNome: maquina.nome,
+          receita: receitaTotal,
+          custo: custoProdutos,
+          lucro: lucroMaquina,
+          tipoPagamentoLoja: "aluguel",
+          valorAluguel: aluguelMaquina,
+          aluguel: aluguelMaquina,
+        });
+      } else {
+        // Calcular comissão da máquina
+        const percentualComissao = parseFloat(maquina.percentualComissao || 0);
+        const comissaoMaquina = (lucroMaquina * percentualComissao) / 100;
+
+        console.log(`     - Comissão (${percentualComissao}%): R$ ${comissaoMaquina.toFixed(2)}`);
+
+        totalComissao += comissaoMaquina;
+
+        detalhes.push({
+          maquinaId: maquina.id,
+          maquinaCodigo: maquina.codigo,
+          maquinaNome: maquina.nome,
+          receita: receitaTotal,
+          custo: custoProdutos,
+          lucro: lucroMaquina,
+          tipoPagamentoLoja: "comissao",
+          percentualComissao: percentualComissao,
+          comissao: comissaoMaquina,
+        });
+      }
     }
 
-    // Salvar comissão no banco
-    if (totalComissao > 0) {
+    // Salvar comissão/aluguel no banco
+    if (totalComissao > 0 || totalAluguel > 0) {
       console.log(`💰 Total Lucro: R$ ${totalLucro.toFixed(2)}`);
       console.log(`💰 Total Comissão: R$ ${totalComissao.toFixed(2)}`);
+      console.log(`🏠 Total Aluguel: R$ ${totalAluguel.toFixed(2)}`);
       console.log(`💾 Verificando se já existe comissão para esta loja e roteiro...`);
-      
+
       // Verificar se já existe comissão para esta loja e roteiro
       const comissaoExistente = await ComissaoLoja.findOne({
         where: {
@@ -2531,12 +2568,13 @@ export async function calcularComissaoLoja(lojaId, roteiroId = null) {
           roteiroId: roteiroId,
         },
       });
-      
+
       if (comissaoExistente) {
         console.log(`⚠️ Comissão já existe (ID: ${comissaoExistente.id}), atualizando...`);
         await comissaoExistente.update({
           totalLucro: totalLucro,
           totalComissao: totalComissao,
+          totalAluguel: totalAluguel,
           detalhes: detalhes,
           dataCalculo: new Date(),
         });
@@ -2548,12 +2586,13 @@ export async function calcularComissaoLoja(lojaId, roteiroId = null) {
           roteiroId: roteiroId,
           totalLucro: totalLucro,
           totalComissao: totalComissao,
+          totalAluguel: totalAluguel,
           detalhes: detalhes,
         });
         console.log(`✅ Comissão salva com sucesso!`);
       }
     } else {
-      console.log(`⚠️ Total de comissão é 0, não será salvo no banco`);
+      console.log(`⚠️ Total de comissão e aluguel são 0, não será salvo no banco`);
     }
 
     console.log(`📊 ====== FIM CÁLCULO COMISSÃO ======`);
@@ -2561,6 +2600,7 @@ export async function calcularComissaoLoja(lojaId, roteiroId = null) {
     return {
       totalLucro,
       totalComissao,
+      totalAluguel,
       detalhes,
     };
   } catch (error) {

@@ -1103,9 +1103,10 @@ export const relatorioComissoes = async (req, res) => {
       (acc, com) => {
         acc.totalLucro += parseFloat(com.totalLucro || 0);
         acc.totalComissao += parseFloat(com.totalComissao || 0);
+        acc.totalAluguel += parseFloat(com.totalAluguel || 0);
         return acc;
       },
-      { totalLucro: 0, totalComissao: 0 },
+      { totalLucro: 0, totalComissao: 0, totalAluguel: 0 },
     );
 
     // Agrupar por loja
@@ -1118,12 +1119,16 @@ export const relatorioComissoes = async (req, res) => {
           lojaNome: lojaNome,
           totalLucro: 0,
           totalComissao: 0,
+          totalAluguel: 0,
           registros: 0,
         };
       }
       comissoesPorLoja[lojaNome].totalLucro += parseFloat(com.totalLucro || 0);
       comissoesPorLoja[lojaNome].totalComissao += parseFloat(
         com.totalComissao || 0,
+      );
+      comissoesPorLoja[lojaNome].totalAluguel += parseFloat(
+        com.totalAluguel || 0,
       );
       comissoesPorLoja[lojaNome].registros += 1;
     });
@@ -1146,6 +1151,7 @@ export const relatorioComissoes = async (req, res) => {
         dataCalculo: com.dataCalculo,
         totalLucro: parseFloat(com.totalLucro || 0),
         totalComissao: parseFloat(com.totalComissao || 0),
+        totalAluguel: parseFloat(com.totalAluguel || 0),
         detalhes: com.detalhes,
       })),
     });

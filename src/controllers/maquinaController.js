@@ -118,6 +118,8 @@ export const criarMaquina = async (req, res) => {
       jogadasPremium,
       percentualAlertaEstoque,
       percentualComissao,
+      tipoPagamentoLoja,
+      valorAluguel,
       localizacao,
       machinePayPosId,
       machinePayUsrId,
@@ -167,6 +169,9 @@ export const criarMaquina = async (req, res) => {
       jogadasPremium: jogadasPremium || null,
       percentualAlertaEstoque: percentualAlertaEstoque || 30,
       percentualComissao: percentualComissao || 0,
+      tipoPagamentoLoja:
+        tipoPagamentoLoja === "aluguel" ? "aluguel" : "comissao",
+      valorAluguel: valorAluguel || 0,
       localizacao,
       machinePayPosId: machinePayPosId || null,
       machinePayUsrId: machinePayUsrIdFinal,
@@ -203,6 +208,8 @@ export const atualizarMaquina = async (req, res) => {
       jogadasPremium,
       percentualAlertaEstoque,
       percentualComissao,
+      tipoPagamentoLoja,
+      valorAluguel,
       localizacao,
       ativo,
       machinePayPosId,
@@ -254,6 +261,11 @@ export const atualizarMaquina = async (req, res) => {
       percentualAlertaEstoque:
         percentualAlertaEstoque ?? maquina.percentualAlertaEstoque,
       percentualComissao: percentualComissao ?? maquina.percentualComissao,
+      tipoPagamentoLoja:
+        tipoPagamentoLoja === "aluguel" || tipoPagamentoLoja === "comissao"
+          ? tipoPagamentoLoja
+          : maquina.tipoPagamentoLoja,
+      valorAluguel: valorAluguel ?? maquina.valorAluguel,
       localizacao: localizacao ?? maquina.localizacao,
       ativo: ativo ?? maquina.ativo,
       machinePayPosId: machinePayPosId ?? maquina.machinePayPosId,

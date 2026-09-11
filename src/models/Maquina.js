@@ -109,6 +109,28 @@ const Maquina = sequelize.define(
         max: 100,
       },
     },
+    tipoPagamentoLoja: {
+      type: DataTypes.STRING(20),
+      allowNull: false,
+      defaultValue: "comissao",
+      field: "tipo_pagamento_loja",
+      comment:
+        "Forma de pagamento ao ponto/loja: 'comissao' (percentual sobre o lucro) ou 'aluguel' (valor fixo)",
+      validate: {
+        isIn: [["comissao", "aluguel"]],
+      },
+    },
+    valorAluguel: {
+      type: DataTypes.DECIMAL(10, 2),
+      allowNull: false,
+      defaultValue: 0,
+      field: "valor_aluguel",
+      comment:
+        "Valor mensal fixo de aluguel pago à loja (usado quando tipoPagamentoLoja = aluguel)",
+      validate: {
+        min: 0,
+      },
+    },
     localizacao: {
       type: DataTypes.STRING(100),
       allowNull: true,

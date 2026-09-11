@@ -50,6 +50,13 @@ const ComissaoLoja = sequelize.define(
       field: "total_comissao",
       comment: "Comissão total calculada",
     },
+    totalAluguel: {
+      type: DataTypes.DECIMAL(10, 2),
+      allowNull: false,
+      defaultValue: 0,
+      field: "total_aluguel",
+      comment: "Aluguel total descontado das máquinas em modo aluguel",
+    },
     detalhes: {
       type: DataTypes.JSON,
       allowNull: true,
