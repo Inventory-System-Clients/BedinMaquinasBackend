@@ -111,9 +111,9 @@ export const registrarMovimentacao = async (req, res) => {
       });
     }
 
-    // Sacola pendente automática: sempre que houver dinheiro em espécie retirado
-    const statusFinanceiro =
-      Number(valorEntradaNotas) > 0 ? "pendente" : "concluido";
+    // O dinheiro/cartão é lançado por ponto (loja) na tela Financeiro, então
+    // toda coleta fica pendente até esse lançamento (exceto retirada de estoque)
+    const statusFinanceiro = retiradaEstoque ? "concluido" : "pendente";
 
     // Buscar máquina para pegar valorFicha
     const maquina = await Maquina.findByPk(maquinaId);
@@ -978,53 +978,11 @@ export const atualizarValoresFinanceiros = async (req, res) => {
       statusFinanceiro: "concluido",
     });
 
-    // Fechamento automático na Machine Pay (best-effort, nunca bloqueia a
-    // conclusão do registro financeiro local)
-    let machinePayFechamento = { executado: false, concluido: false, erro: null };
-
-    if (maquina?.machinePayPosId) {
-      try {
-        const movimentacaoAnterior = await Movimentacao.findOne({
-          where: {
-            maquinaId: movimentacao.maquinaId,
-            dataColeta: { [Op.lt]: movimentacao.dataColeta },
-          },
-          order: [["dataColeta", "DESC"]],
-        });
-
-        if (!movimentacaoAnterior) {
-          machinePayFechamento.erro =
-            "Sem movimentação anterior desta máquina para determinar o período de fechamento";
-        } else {
-          const { fecharFechamentoMachinePay } = await import(
-            "../services/machinePayService.js"
-          );
-
-          const resultadoFechamento = await fecharFechamentoMachinePay({
-            posId: maquina.machinePayPosId,
-            inicio: movimentacaoAnterior.dataColeta,
-            fim: movimentacao.dataColeta,
-            valor: Number(valorEntradaNotas) || 0,
-          });
-
-          machinePayFechamento = {
-            executado: true,
-            concluido: resultadoFechamento.concluido,
-            erro: null,
-          };
-        }
-      } catch (machinePayError) {
-        console.error(
-          "[MachinePay] Erro ao executar fechamento:",
-          machinePayError,
-        );
-        machinePayFechamento = {
-          executado: true,
-          concluido: false,
-          erro: machinePayError.message,
-        };
-      }
-    }
+    const machinePayFechamento = await executarFechamentoMachinePay(
+      maquina,
+      movimentacao,
+      valorEntradaNotas,
+    );
 
     res.json({
       message: "Valores financeiros atualizados com sucesso",
@@ -1034,6 +992,163 @@ export const atualizarValoresFinanceiros = async (req, res) => {
   } catch (error) {
     console.error("Erro ao atualizar valores financeiros:", error);
     res.status(500).json({ error: "Erro ao atualizar valores financeiros" });
+  }
+};
+
+// Fechamento automático na Machine Pay (best-effort, nunca bloqueia a
+// conclusão do registro financeiro local)
+async function executarFechamentoMachinePay(maquina, movimentacao, valorNotas) {
+  let machinePayFechamento = { executado: false, concluido: false, erro: null };
+
+  if (!maquina?.machinePayPosId) return machinePayFechamento;
+
+  try {
+    const movimentacaoAnterior = await Movimentacao.findOne({
+      where: {
+        maquinaId: movimentacao.maquinaId,
+        dataColeta: { [Op.lt]: movimentacao.dataColeta },
+      },
+      order: [["dataColeta", "DESC"]],
+    });
+
+    if (!movimentacaoAnterior) {
+      machinePayFechamento.erro =
+        "Sem movimentação anterior desta máquina para determinar o período de fechamento";
+      return machinePayFechamento;
+    }
+
+    const { fecharFechamentoMachinePay } = await import(
+      "../services/machinePayService.js"
+    );
+
+    const resultadoFechamento = await fecharFechamentoMachinePay({
+      posId: maquina.machinePayPosId,
+      inicio: movimentacaoAnterior.dataColeta,
+      fim: movimentacao.dataColeta,
+      valor: Number(valorNotas) || 0,
+    });
+
+    machinePayFechamento = {
+      executado: true,
+      concluido: resultadoFechamento.concluido,
+      erro: null,
+    };
+  } catch (machinePayError) {
+    console.error("[MachinePay] Erro ao executar fechamento:", machinePayError);
+    machinePayFechamento = {
+      executado: true,
+      concluido: false,
+      erro: machinePayError.message,
+    };
+  }
+
+  return machinePayFechamento;
+}
+
+// Rateia um total em centavos proporcionalmente aos pesos (o resto vai para o último)
+function ratearValor(total, pesos) {
+  const totalCentavos = Math.round((Number(total) || 0) * 100);
+  const somaPesos = pesos.reduce((s, p) => s + p, 0);
+  const partes = pesos.map((p) =>
+    somaPesos > 0
+      ? Math.floor((totalCentavos * p) / somaPesos)
+      : Math.floor(totalCentavos / pesos.length),
+  );
+  const resto = totalCentavos - partes.reduce((s, p) => s + p, 0);
+  partes[partes.length - 1] += resto;
+  return partes.map((c) => c / 100);
+}
+
+// PUT /api/movimentacoes/financeiro-ponto
+// Lança o dinheiro e o cartão totais de um ponto (loja) de uma vez. O valor é
+// rateado entre as movimentações pendentes informadas, proporcionalmente às
+// fichas de cada máquina (igualmente se nenhuma tiver fichas).
+export const atualizarValoresFinanceirosPonto = async (req, res) => {
+  try {
+    const { movimentacaoIds, valorDinheiro, valorCartao } = req.body;
+
+    if (!Array.isArray(movimentacaoIds) || movimentacaoIds.length === 0) {
+      return res
+        .status(400)
+        .json({ error: "Informe as movimentações do ponto" });
+    }
+
+    const dinheiro = Number(valorDinheiro);
+    const cartao = Number(valorCartao || 0);
+    if (!Number.isFinite(dinheiro) || dinheiro < 0 || !Number.isFinite(cartao) || cartao < 0) {
+      return res.status(400).json({ error: "Valores inválidos" });
+    }
+
+    const movimentacoes = await Movimentacao.findAll({
+      where: { id: movimentacaoIds, statusFinanceiro: "pendente" },
+      order: [["dataColeta", "ASC"]],
+    });
+
+    if (movimentacoes.length !== movimentacaoIds.length) {
+      return res.status(400).json({
+        error:
+          "Algumas movimentações não existem ou já tiveram os valores preenchidos",
+      });
+    }
+
+    const lojaIds = new Set(movimentacoes.map((m) => m.lojaId));
+    if (lojaIds.size > 1) {
+      return res
+        .status(400)
+        .json({ error: "As movimentações devem ser do mesmo ponto" });
+    }
+
+    const maquinas = await Maquina.findAll({
+      where: { id: movimentacoes.map((m) => m.maquinaId) },
+    });
+    const maquinaPorId = new Map(maquinas.map((m) => [m.id, m]));
+
+    const pesos = movimentacoes.map((m) => Number(m.fichas) || 0);
+    const dinheiroPorMov = ratearValor(dinheiro, pesos);
+    const cartaoPorMov = ratearValor(cartao, pesos);
+
+    await sequelize.transaction(async (transaction) => {
+      for (let i = 0; i < movimentacoes.length; i++) {
+        const mov = movimentacoes[i];
+        const maquina = maquinaPorId.get(mov.maquinaId);
+        const valorFaturado =
+          (mov.fichas ? mov.fichas * parseFloat(maquina.valorFicha) : 0) +
+          dinheiroPorMov[i] +
+          cartaoPorMov[i];
+
+        await mov.update(
+          {
+            valorEntradaNotas: dinheiroPorMov[i],
+            valorEntradaCartao: cartaoPorMov[i],
+            valorFaturado,
+            statusFinanceiro: "concluido",
+          },
+          { transaction },
+        );
+      }
+    });
+
+    const fechamentos = [];
+    for (let i = 0; i < movimentacoes.length; i++) {
+      const mov = movimentacoes[i];
+      fechamentos.push(
+        await executarFechamentoMachinePay(
+          maquinaPorId.get(mov.maquinaId),
+          mov,
+          dinheiroPorMov[i],
+        ),
+      );
+    }
+
+    res.json({
+      message: "Valores do ponto lançados com sucesso",
+      totalMovimentacoes: movimentacoes.length,
+      machinePayFalhas: fechamentos.filter((f) => f.executado && !f.concluido)
+        .length,
+    });
+  } catch (error) {
+    console.error("Erro ao lançar valores financeiros do ponto:", error);
+    res.status(500).json({ error: "Erro ao lançar valores do ponto" });
   }
 };
 
