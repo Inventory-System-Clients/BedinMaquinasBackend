@@ -32,6 +32,7 @@ import DevolucaoCarrinho from "./DevolucaoCarrinho.js";
 import CarrinhoItem from "./CarrinhoItem.js";
 import DevolucaoCarrinhoItem from "./DevolucaoCarrinhoItem.js";
 import RoteiroLocalizacao from "./RoteiroLocalizacao.js";
+import { ContaBancaria, ContaFinanceira, LancamentoFinanceiro } from "./GestaoContas.js";
 import { sequelize } from "../database/connection.js";
 
 // Associação Manutencao <-> Maquina
@@ -249,7 +250,17 @@ DevolucaoCarrinho.hasMany(DevolucaoCarrinhoItem, { foreignKey: "devolucaoId", as
 DevolucaoCarrinhoItem.belongsTo(Produto, { foreignKey: "produtoId", as: "produto" });
 Produto.hasMany(DevolucaoCarrinhoItem, { foreignKey: "produtoId", as: "devolucaoItens" });
 
+// Gestão de contas (Financeiro → Gestão de Contas). Sem constraint no banco: arquivar
+// conta bancária ou excluir usuário não pode travar o histórico financeiro.
+ContaFinanceira.belongsTo(ContaBancaria, { foreignKey: "contaBancariaId", as: "contaBancaria", constraints: false });
+ContaFinanceira.belongsTo(Usuario, { foreignKey: "criadoPorId", as: "criadoPor", constraints: false });
+LancamentoFinanceiro.belongsTo(ContaBancaria, { foreignKey: "contaBancariaId", as: "contaBancaria", constraints: false });
+LancamentoFinanceiro.belongsTo(Usuario, { foreignKey: "criadoPorId", as: "criadoPor", constraints: false });
+
 export {
+  ContaBancaria,
+  ContaFinanceira,
+  LancamentoFinanceiro,
   Usuario,
   Loja,
   Maquina,
