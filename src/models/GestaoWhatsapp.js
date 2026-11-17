@@ -4,15 +4,16 @@ import { sequelize } from "../database/connection.js";
 // Avisos de WhatsApp da Gestão de Contas (Evolution API, conectada por QR Code).
 // Tabelas criadas pelo sequelize.sync() do server.js.
 
-/** Configuração única (id = 1). A chave da Evolution fica cifrada (utils/cofreCredenciais.js). */
+/**
+ * Configuração única (id = 1). URL e chave da Evolution NÃO ficam aqui: vêm das variáveis
+ * de ambiente EVOLUTION_API_URL / EVOLUTION_API_KEY (ver services/gestaoWhatsappService.js).
+ */
 export const WhatsappConfig = sequelize.define(
   "WhatsappConfig",
   {
     id: { type: DataTypes.INTEGER, primaryKey: true, defaultValue: 1 },
     ativo: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
-    evolutionUrl: { type: DataTypes.STRING(300), allowNull: true },
     instancia: { type: DataTypes.STRING(60), allowNull: true },
-    apiKeyCifrada: { type: DataTypes.TEXT, allowNull: true },
     // Quantos dias antes do vencimento vai o aviso antecipado (0 = só no dia).
     diasAntes: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 3 },
     // A partir de que hora (Brasília) os avisos do dia saem.
@@ -60,6 +61,9 @@ export const WhatsappAviso = sequelize.define(
   {
     tableName: "gestao_whatsapp_avisos",
     underscored: true,
-    indexes: [{ unique: true, fields: ["conta_id", "destinatario_id", "tipo_aviso", "vencimento"] }],
+    // Nome explícito (≤ 63 caracteres): o automático tinha 69, o Postgres cortava e o
+    // sync() não reconhecia o índice existente — tentava criar de novo e o servidor caía
+    // no 2º boot. Este é exatamente o nome cortado que já existe nos bancos criados antes.
+    indexes: [{ name: "gestao_whatsapp_avisos_conta_id_destinatario_id_tipo_aviso_venc", unique: true, fields: ["conta_id", "destinatario_id", "tipo_aviso", "vencimento"] }],
   }
 );

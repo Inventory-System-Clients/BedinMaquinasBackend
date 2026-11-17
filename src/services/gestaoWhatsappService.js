@@ -1,15 +1,16 @@
 import { Op } from "sequelize";
 import { ContaFinanceira, WhatsappAviso, WhatsappConfig, WhatsappDestinatario } from "../models/index.js";
-import { cifrarCredenciais, decifrarCredenciais } from "../utils/cofreCredenciais.js";
 import { hojeBrasil, somarDias } from "../utils/gestaoContasRules.js";
 import { avisosPendentes, chaveAviso, horaBrasil, montarMensagem, normalizarTelefone } from "../utils/gestaoWhatsappRules.js";
 
 // Avisos de vencimento por WhatsApp (Gestão de Contas). Mesmo modelo da GiraKids:
 // o WhatsApp roda numa Evolution API externa (conectada por QR Code) e aqui só falamos
-// com ela por REST. A sessão do WhatsApp fica na Evolution; aqui ficam config (chave
-// cifrada), destinatários e o registro dos avisos enviados.
+// com ela por REST. A sessão do WhatsApp fica na Evolution.
+//
+// URL e chave da Evolution vêm SÓ das variáveis de ambiente protegidas do servidor
+// (EVOLUTION_API_URL / EVOLUTION_API_KEY) — nunca do banco nem da tela. No banco ficam
+// apenas instância, preferências, destinatários e o registro dos avisos.
 
-const PROVEDOR_COFRE = "whatsapp-evolution";
 const MAX_TENTATIVAS = 3;
 const PAUSA_ENTRE_ENVIOS_MS = 2500;
 
@@ -20,6 +21,16 @@ const esperar = (ms) => new Promise((r) => setTimeout(r, ms));
 // Configuração
 // ---------------------------------------------------------------------------
 
+/** URL e chave da Evolution, lidas do ambiente a cada uso (sem cache). */
+function evolutionDoAmbiente() {
+  const url = String(process.env.EVOLUTION_API_URL || "").trim().replace(/\/+$/, "");
+  const apiKey = String(process.env.EVOLUTION_API_KEY || "").trim();
+  const faltando = [];
+  if (!/^https?:\/\/[^\s/]+/i.test(url)) faltando.push("EVOLUTION_API_URL");
+  if (!apiKey) faltando.push("EVOLUTION_API_KEY");
+  return { evolutionUrl: faltando.includes("EVOLUTION_API_URL") ? null : url, apiKey: apiKey || null, faltando };
+}
+
 async function registroConfig() {
   const [config] = await WhatsappConfig.findOrCreate({ where: { id: 1 }, defaults: { id: 1 } });
   return config;
@@ -27,26 +38,30 @@ async function registroConfig() {
 
 async function lerConfig() {
   const c = await registroConfig();
-  let apiKey = null;
-  if (c.apiKeyCifrada) {
-    try {
-      apiKey = decifrarCredenciais(PROVEDOR_COFRE, c.apiKeyCifrada).apiKey;
-    } catch {
-      apiKey = null;
-    }
-  }
-  return { registro: c, ...c.get({ plain: true }), apiKey };
+  return { registro: c, ...c.get({ plain: true }), ...evolutionDoAmbiente() };
 }
 
 const configurado = (c) => Boolean(c.evolutionUrl && c.apiKey && c.instancia);
 
-/** Para a tela: a chave nunca volta, nem em parte. */
+const mensagemNaoConfigurado = (c) =>
+  c.faltando?.length
+    ? `Defina ${c.faltando.join(" e ")} nas variáveis de ambiente do servidor (Render).`
+    : "Informe o nome da instância na configuração dos avisos.";
+
+/** Para a tela: nem a chave nem a URL completa da Evolution voltam — só se estão definidas. */
 function configPublica(c) {
+  let evolutionHost = null;
+  try {
+    evolutionHost = c.evolutionUrl ? new URL(c.evolutionUrl).host : null;
+  } catch {
+    evolutionHost = null;
+  }
   return {
     ativo: c.ativo,
-    evolutionUrl: c.evolutionUrl,
     instancia: c.instancia,
-    apiKeyConfigurada: Boolean(c.apiKey),
+    evolutionConfigurada: c.faltando.length === 0,
+    evolutionHost,
+    variaveisFaltando: c.faltando,
     diasAntes: c.diasAntes,
     horaEnvio: c.horaEnvio,
     ultimaExecucao: c.ultimaExecucao,
@@ -59,20 +74,10 @@ export async function salvarConfig(payload = {}, usuarioNome) {
   const atual = await lerConfig();
   const novo = {};
 
-  if (payload.evolutionUrl !== undefined) {
-    const url = String(payload.evolutionUrl || "").trim().replace(/\/+$/, "");
-    if (url && !/^https?:\/\/[^\s/]+/i.test(url)) throw erroHttp(400, "A URL da Evolution API deve começar com https://");
-    novo.evolutionUrl = url || null;
-  }
   if (payload.instancia !== undefined) {
     const instancia = String(payload.instancia || "").trim();
     if (instancia && !/^[\w.-]{1,60}$/.test(instancia)) throw erroHttp(400, "Nome da instância: use letras, números, ponto, hífen ou _.");
     novo.instancia = instancia || null;
-  }
-  let apiKey = atual.apiKey;
-  if (payload.apiKey !== undefined && String(payload.apiKey).trim()) {
-    apiKey = String(payload.apiKey).trim();
-    novo.apiKeyCifrada = cifrarCredenciais(PROVEDOR_COFRE, { apiKey });
   }
   if (payload.diasAntes !== undefined) {
     const dias = Number(payload.diasAntes);
@@ -86,8 +91,15 @@ export async function salvarConfig(payload = {}, usuarioNome) {
   }
   if (payload.ativo !== undefined) novo.ativo = Boolean(payload.ativo);
 
-  const final = { ...atual, ...novo, apiKey };
-  if (final.ativo && !configurado(final)) throw erroHttp(400, "Preencha URL, chave e instância da Evolution API antes de ligar os avisos.");
+  const final = { ...atual, ...novo };
+  if (final.ativo && !configurado(final)) {
+    throw erroHttp(
+      400,
+      final.faltando.length
+        ? `Defina ${final.faltando.join(" e ")} nas variáveis de ambiente do servidor antes de ligar os avisos.`
+        : "Informe o nome da instância antes de ligar os avisos."
+    );
+  }
 
   await atual.registro.update({ ...novo, atualizadoPor: usuarioNome || null });
   return configPublica(await lerConfig());
@@ -98,7 +110,7 @@ export async function salvarConfig(payload = {}, usuarioNome) {
 // ---------------------------------------------------------------------------
 
 async function evolution(config, caminho, { method = "GET", body } = {}) {
-  if (!configurado(config)) throw erroHttp(400, "Configure a URL, a chave e a instância da Evolution API.");
+  if (!configurado(config)) throw erroHttp(400, mensagemNaoConfigurado(config));
   let resposta;
   try {
     resposta = await fetch(`${config.evolutionUrl}${caminho}`, {
@@ -157,7 +169,7 @@ async function obterConexao(config) {
 /** QR Code para conectar o número; cria a instância na Evolution se ainda não existir. */
 export async function conectar() {
   const config = await lerConfig();
-  if (!configurado(config)) throw erroHttp(400, "Salve URL, chave e instância da Evolution API antes de conectar.");
+  if (!configurado(config)) throw erroHttp(400, mensagemNaoConfigurado(config));
   const estado = await estadoConexao(config).catch((error) => {
     if (error.httpStatus === 404) return "inexistente";
     throw error;
@@ -334,7 +346,7 @@ export async function processarAvisos({ manual = false } = {}) {
       if (!config.ativo) return { ignorado: "Avisos desligados." };
       if (horaBrasil() < config.horaEnvio) return { ignorado: "Antes do horário de envio." };
     }
-    if (!configurado(config)) throw erroHttp(400, "Configure a Evolution API antes de enviar.");
+    if (!configurado(config)) throw erroHttp(400, mensagemNaoConfigurado(config));
     const conexao = await obterConexao(config);
     if (conexao.estado !== "open") {
       throw erroHttp(409, conexao.estado === "erro" ? conexao.erro : "O WhatsApp não está conectado. Conecte o número pelo QR Code.");
