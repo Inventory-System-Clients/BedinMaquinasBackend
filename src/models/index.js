@@ -33,6 +33,7 @@ import CarrinhoItem from "./CarrinhoItem.js";
 import DevolucaoCarrinhoItem from "./DevolucaoCarrinhoItem.js";
 import RoteiroLocalizacao from "./RoteiroLocalizacao.js";
 import { ContaBancaria, ContaFinanceira, LancamentoFinanceiro } from "./GestaoContas.js";
+import { WhatsappAviso, WhatsappConfig, WhatsappDestinatario } from "./GestaoWhatsapp.js";
 import { sequelize } from "../database/connection.js";
 
 // Associação Manutencao <-> Maquina
@@ -255,12 +256,17 @@ Produto.hasMany(DevolucaoCarrinhoItem, { foreignKey: "produtoId", as: "devolucao
 ContaFinanceira.belongsTo(ContaBancaria, { foreignKey: "contaBancariaId", as: "contaBancaria", constraints: false });
 ContaFinanceira.belongsTo(Usuario, { foreignKey: "criadoPorId", as: "criadoPor", constraints: false });
 LancamentoFinanceiro.belongsTo(ContaBancaria, { foreignKey: "contaBancariaId", as: "contaBancaria", constraints: false });
+WhatsappAviso.belongsTo(ContaFinanceira, { foreignKey: "contaId", as: "conta", constraints: false });
+WhatsappAviso.belongsTo(WhatsappDestinatario, { foreignKey: "destinatarioId", as: "destinatario", constraints: false });
 LancamentoFinanceiro.belongsTo(Usuario, { foreignKey: "criadoPorId", as: "criadoPor", constraints: false });
 
 export {
   ContaBancaria,
   ContaFinanceira,
   LancamentoFinanceiro,
+  WhatsappAviso,
+  WhatsappConfig,
+  WhatsappDestinatario,
   Usuario,
   Loja,
   Maquina,
