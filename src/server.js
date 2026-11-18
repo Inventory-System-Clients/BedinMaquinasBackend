@@ -55,7 +55,8 @@ app.use(
   }),
 );
 app.use(morgan("dev"));
-app.use(express.json());
+// 12mb: a leitura de contadores por foto (assistente IA) envia a imagem em base64.
+app.use(express.json({ limit: "12mb" }));
 app.use(express.urlencoded({ extended: true }));
 
 // Servir arquivos estáticos da pasta public
@@ -122,6 +123,8 @@ const startServer = async () => {
     // Sync database - cria novas tabelas/colunas mas não altera existentes
     // Para evitar erros de sintaxe SQL ao adicionar constraints
     await sequelize.sync();
+    const { garantirColunas } = await import("./database/garantirColunas.js");
+    await garantirColunas();
     console.log("✅ Database sincronizado!");
 
     // Criar admin padrão se não existir

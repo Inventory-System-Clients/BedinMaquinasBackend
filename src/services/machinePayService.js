@@ -677,6 +677,39 @@ export const consultarTransacoesMachinePay = async ({ posId, inicio, fim }) => {
   };
 };
 
+const formatarDataHoraBrasilia = (data) =>
+  new Intl.DateTimeFormat("sv-SE", {
+    timeZone: "America/Sao_Paulo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  })
+    .format(data)
+    .replace(" ", "T");
+
+// Soma o valor recebido (pagamentos aprovados, excluindo devoluções) na Machine Pay
+// num intervalo. Trazido da AgarraMais: usado pela sugestão de Total Pré (desconto
+// automático) e para preservar o extrato antes de um fechamento (Registrar Dinheiro).
+export const calcularTotalRecebidoMachinePay = async ({ posId, inicio, fim }) => {
+  const inicioFormatado = formatarDataHoraBrasilia(new Date(inicio));
+  const fimFormatado = formatarDataHoraBrasilia(new Date(fim));
+
+  const { transacoes } = await consultarTransacoesMachinePay({
+    posId,
+    inicio: inicioFormatado,
+    fim: fimFormatado,
+  });
+
+  const total = transacoes
+    .filter((transacao) => !transacao.jaDevolvido)
+    .reduce((soma, transacao) => soma + Number(transacao.valor || 0), 0);
+
+  return Number(total.toFixed(2));
+};
+
 export const devolverPagamentoMachinePay = async ({ idwebhook }) => {
   const loginUrl = process.env.MACHINE_PAY_LOGIN_URL || DEFAULT_LOGIN_URL;
   const url = `${loginUrl}maquinas.php?acao=devolver&idwebhook=${encodeURIComponent(idwebhook)}`;

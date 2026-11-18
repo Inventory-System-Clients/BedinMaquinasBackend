@@ -38,6 +38,12 @@ const MovimentacaoProduto = sequelize.define(
       defaultValue: 0,
       comment: "Quantidade deste produto que foi abastecida",
     },
+    // Trazido da AgarraMais: retirada sem venda (não entra em quantidadeSaiu).
+    retiradaProduto: {
+      type: DataTypes.INTEGER,
+      allowNull: false,
+      defaultValue: 0,
+    },
   },
   {
     tableName: "movimentacao_produtos",

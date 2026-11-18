@@ -48,6 +48,8 @@ export const registrarMovimentacao = async (req, res) => {
       // Só é usado quando esta é a primeira movimentação da máquina (sem
       // movimentação anterior para calcular o período automaticamente)
       machinePayDataInicio,
+      // Tela de Movimentações (padrão AgarraMais): "automatico" | "manual"
+      origemTotalPre,
     } = req.body;
 
     // Validações
@@ -77,8 +79,18 @@ export const registrarMovimentacao = async (req, res) => {
               0,
               parseInt(p.quantidadeAbastecida) || 0,
             ),
+            retiradaProduto: Math.max(0, parseInt(p.retiradaProduto) || 0),
           }))
       : [];
+
+    // Retirada sem venda (tela de Movimentações, padrão AgarraMais). Só quando a tela
+    // manda o campo: aí totalPos = totalPre + abastecidas - retirada (ver hook do
+    // model). O fluxo de roteiros não manda e segue a regra antiga (null).
+    const veioRetiradaProduto =
+      Array.isArray(produtos) && produtos.some((p) => p && p.retiradaProduto !== undefined);
+    const retiradaProdutoTotal = veioRetiradaProduto
+      ? produtosNormalizados.reduce((soma, p) => soma + p.retiradaProduto, 0)
+      : null;
 
     // Com 1 único produto, a saída detalhada deve refletir exatamente a saída da movimentação.
     if (produtosNormalizados.length === 1) {
@@ -111,9 +123,9 @@ export const registrarMovimentacao = async (req, res) => {
       });
     }
 
-    // O dinheiro/cartão é lançado por ponto (loja) na tela Financeiro, então
-    // toda coleta fica pendente até esse lançamento (exceto retirada de estoque)
-    const statusFinanceiro = retiradaEstoque ? "concluido" : "pendente";
+    // O lançamento manual por ponto (tela Financeiro antiga) saiu: os valores vêm da
+    // própria movimentação / Registrar Dinheiro, então a coleta já nasce concluída.
+    const statusFinanceiro = "concluido";
 
     // Buscar máquina para pegar valorFicha
     const maquina = await Maquina.findByPk(maquinaId);
@@ -391,7 +403,23 @@ export const registrarMovimentacao = async (req, res) => {
       // Gestão Financeira - Sacola (identificação automática, não editável)
       numeroSacola,
       statusFinanceiro,
+      // Tela de Movimentações (padrão AgarraMais)
+      origemTotalPre:
+        origemTotalPre === "automatico" || origemTotalPre === "manual"
+          ? origemTotalPre
+          : null,
+      valorFichaUnitario: parseFloat(maquina.valorFicha) || 0,
+      retiradaProduto: retiradaProdutoTotal,
     }, lockTransaction ? { transaction: lockTransaction } : undefined);
+
+    // Nova coleta: o acumulado da Machine Pay preservado antes de fechamentos
+    // (Registrar Dinheiro) já foi considerado; zera para o próximo ciclo.
+    try {
+      const { MachinePayColetaPendente } = await import("../models/index.js");
+      await MachinePayColetaPendente.destroy({ where: { maquinaId } });
+    } catch (erroPendente) {
+      console.error("[MachinePay] Erro ao limpar coleta pendente:", erroPendente.message);
+    }
 
     if (lockTransaction) {
       await lockTransaction.commit();
@@ -427,6 +455,7 @@ export const registrarMovimentacao = async (req, res) => {
         produtoId: p.produtoId,
         quantidadeSaiu: p.quantidadeSaiu || 0,
         quantidadeAbastecida: p.quantidadeAbastecida || 0,
+        retiradaProduto: p.retiradaProduto || 0,
       }));
 
       await MovimentacaoProduto.bulkCreate(detalhesProdutos);
@@ -857,8 +886,14 @@ export const atualizarMovimentacao = async (req, res) => {
     ) {
       const maquina = await Maquina.findByPk(movimentacao.maquinaId);
       if (maquina) {
+        // Valor da ficha da época da coleta (snapshot), se houver; senão o atual.
+        const valorFichaHistorico =
+          movimentacao.valorFichaUnitario !== null &&
+          movimentacao.valorFichaUnitario !== undefined
+            ? parseFloat(movimentacao.valorFichaUnitario)
+            : parseFloat(maquina.valorFicha);
         updateData.valorFaturado =
-          updateData.fichas * parseFloat(maquina.valorFicha) +
+          updateData.fichas * valorFichaHistorico +
           (updateData.quantidade_notas_entrada
             ? parseFloat(updateData.quantidade_notas_entrada)
             : 0) +
@@ -1244,4 +1279,102 @@ export const buscarValorDigitalMachinePay = async (req, res) => {
         error.message || "Não foi possível buscar o valor digital na Machine Pay.",
     });
   }
+};
+
+// ---------------------------------------------------------------------------
+// Trazido da AgarraMais (tela de Movimentações)
+// ---------------------------------------------------------------------------
+
+const DAY_IN_MS = 24 * 60 * 60 * 1000;
+
+// A cada esse número de dias, força uma conferência manual (o operador conta
+// fisicamente e digita) em vez de confiar cegamente nos pulsos da Machine Pay.
+const DIAS_CICLO_CONFERENCIA_MANUAL = 15;
+
+// GET /movimentacoes/sugestao-total-pre/:maquinaId
+//
+// Sugere o Total Pré da próxima coleta para máquinas com "desconto automático via
+// Machine Pay": a cada valorDescontoMachinePay recebido desde a última coleta a máquina
+// libera um pulso, então o esperado é o totalPos da última coleta menos os pulsos.
+// A cada DIAS_CICLO_CONFERENCIA_MANUAL dias sem conferência manual devolve
+// modo "forcar_manual" (o valor vem só para comparar com o que o operador contar).
+export const sugerirTotalPre = async (req, res) => {
+  try {
+    const { maquinaId } = req.params;
+    const maquina = await Maquina.findByPk(maquinaId);
+
+    if (!maquina) {
+      return res.status(404).json({ error: "Máquina não encontrada" });
+    }
+
+    if (!maquina.machinePayPosId?.trim()) {
+      return res.json({ sugestaoDisponivel: false, motivo: "sem_pos_id" });
+    }
+
+    const valorDesconto = Number(maquina.valorDescontoMachinePay || 0);
+    if (!maquina.descontoAutomaticoMachinePay || valorDesconto <= 0) {
+      return res.json({ sugestaoDisponivel: false, motivo: "desconto_desativado" });
+    }
+
+    const ultimaMov = await Movimentacao.findOne({
+      where: { maquinaId },
+      order: [["dataColeta", "DESC"]],
+    });
+
+    if (!ultimaMov) {
+      return res.json({
+        sugestaoDisponivel: false,
+        motivo: "sem_movimentacao_anterior",
+        modo: "forcar_manual",
+      });
+    }
+
+    const ultimaConferenciaManual = await Movimentacao.findOne({
+      where: { maquinaId, origemTotalPre: "manual" },
+      order: [["dataColeta", "DESC"]],
+    });
+
+    const diasDesdeConferencia = ultimaConferenciaManual
+      ? (Date.now() - new Date(ultimaConferenciaManual.dataColeta).getTime()) / DAY_IN_MS
+      : Infinity;
+    const modo = diasDesdeConferencia >= DIAS_CICLO_CONFERENCIA_MANUAL ? "forcar_manual" : "auto";
+
+    const totalPosAnterior = ultimaMov.totalPos || 0;
+    const { calcularEstoqueRealPagamentos } = await import("../services/estoquePagamentosService.js");
+    const { fonte, estoqueReal, totalRecebidoDesdeUltimaMovimentacao, totalMachinePay, totalCompactPay, pulsos } =
+      await calcularEstoqueRealPagamentos({
+        maquina,
+        valorDesconto,
+        totalPosAnterior,
+        dataUltimaColeta: ultimaMov.dataColeta,
+      });
+
+    return res.json({
+      sugestaoDisponivel: true,
+      fonte,
+      totalMachinePay,
+      totalCompactPay,
+      modo,
+      sugestaoTotalPre: estoqueReal,
+      totalPosAnterior,
+      totalRecebidoDesdeUltimaMovimentacao,
+      pulsos,
+      valorDesconto,
+      ultimaMovimentacaoEm: ultimaMov.dataColeta,
+    });
+  } catch (error) {
+    console.error("Erro ao sugerir total pré via Machine Pay:", error);
+    res.status(502).json({
+      sugestaoDisponivel: false,
+      motivo: "erro_machine_pay",
+      modo: "forcar_manual",
+      error: error.message,
+    });
+  }
+};
+
+// GET /movimentacoes/saidas-compactpay/:maquinaId
+// O Bedin não usa CompactPay: responde "indisponível" para a tela não tentar conferir.
+export const saidasCompactPayDesdeUltimaMovimentacao = async (req, res) => {
+  res.json({ disponivel: false, motivo: "compactpay_nao_usado" });
 };

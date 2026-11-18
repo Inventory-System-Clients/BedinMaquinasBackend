@@ -18,6 +18,11 @@ import resetManualRoutes from "./resetManual.routes.js";
 import carrinhoUsuarioRoutes from "./carrinhoUsuario.routes.js";
 import machinePayRoutes from "./machinePay.routes.js";
 import gestaoContasRoutes from "./gestaoContas.routes.js";
+import alertaMovimentacaoRoutes from "./alertaMovimentacao.routes.js";
+import assistenteIaRoutes from "./assistenteIa.routes.js";
+import registroDinheiroRoutes from "./registroDinheiro.routes.js";
+import gastoVariavelRoutes from "./gastoVariavel.routes.js";
+import sangriaRoutes from "./sangria.routes.js";
 const router = express.Router();
 router.use("/manutencoes", manutencaoRoutes);
 
@@ -42,5 +47,11 @@ router.use("/reset-semanal-manual", resetManualRoutes);
 router.use("/carrinho-usuarios", carrinhoUsuarioRoutes);
 router.use("/machine-pay", machinePayRoutes);
 router.use("/gestao-contas", gestaoContasRoutes);
+// Trazidos da AgarraMais (tela de Movimentações)
+router.use("/alertas-movimentacao", alertaMovimentacaoRoutes);
+router.use("/assistente-ia", assistenteIaRoutes);
+router.use("/registro-dinheiro", registroDinheiroRoutes);
+router.use("/gastos-variaveis", gastoVariavelRoutes);
+router.use("/sangrias", sangriaRoutes);
 
 export default router;

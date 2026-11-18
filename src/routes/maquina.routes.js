@@ -1,3 +1,4 @@
+import { produtoSugeridoPorMaquina } from "../controllers/produtoSugeridoController.js";
 import express from "express";
 import {
   listarMaquinas,
@@ -18,6 +19,8 @@ const router = express.Router();
 router.get("/", autenticar, listarMaquinas);
 router.get("/:id", autenticar, obterMaquina);
 router.get("/:id/estoque", autenticar, obterEstoqueAtual);
+// Tela de Movimentações (padrão AgarraMais)
+router.get("/:id/produto-sugerido", autenticar, produtoSugeridoPorMaquina);
 router.post(
   "/",
   autenticar,

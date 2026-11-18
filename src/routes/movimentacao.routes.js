@@ -9,6 +9,8 @@ import {
   atualizarValoresFinanceiros,
   atualizarValoresFinanceirosPonto,
   buscarValorDigitalMachinePay,
+  sugerirTotalPre,
+  saidasCompactPayDesdeUltimaMovimentacao,
 } from "../controllers/movimentacaoController.js";
 import {
   autenticar,
@@ -20,6 +22,14 @@ const router = express.Router();
 
 router.get("/", autenticar, listarMovimentacoes);
 router.get("/pendentes-financeiro", autenticar, listarPendentesFinanceiro);
+// Tela de Movimentações (padrão AgarraMais)
+router.get("/sugestao-total-pre/:maquinaId", autenticar, sugerirTotalPre);
+router.get(
+  "/saidas-compactpay/:maquinaId",
+  autenticar,
+  autorizarRole("ADMIN"),
+  saidasCompactPayDesdeUltimaMovimentacao
+);
 router.get("/:id", autenticar, obterMovimentacao);
 router.post(
   "/",

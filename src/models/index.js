@@ -34,6 +34,27 @@ import DevolucaoCarrinhoItem from "./DevolucaoCarrinhoItem.js";
 import RoteiroLocalizacao from "./RoteiroLocalizacao.js";
 import { ContaBancaria, ContaFinanceira, LancamentoFinanceiro } from "./GestaoContas.js";
 import { WhatsappAviso, WhatsappConfig, WhatsappDestinatario } from "./GestaoWhatsapp.js";
+// Trazidos da AgarraMais (tela de Movimentações)
+import AlertaMovimentacao from "./AlertaMovimentacao.js";
+import GastoVariavel from "./GastoVariavel.js";
+import RegistroDinheiro from "./RegistroDinheiro.js";
+import MachinePayColetaPendente from "./MachinePayColetaPendente.js";
+import Sangria from "./Sangria.js";
+
+Loja.hasMany(Sangria, { foreignKey: "lojaId", as: "sangrias" });
+Sangria.belongsTo(Loja, { foreignKey: "lojaId", as: "loja" });
+Usuario.hasMany(Sangria, { foreignKey: "usuarioId", as: "sangriasCriadas" });
+Sangria.belongsTo(Usuario, { foreignKey: "usuarioId", as: "usuario" });
+
+AlertaMovimentacao.belongsTo(Maquina, { foreignKey: "maquinaId", as: "maquina" });
+AlertaMovimentacao.belongsTo(Loja, { foreignKey: "lojaId", as: "loja" });
+AlertaMovimentacao.belongsTo(Usuario, { foreignKey: "usuarioId", as: "usuario" });
+AlertaMovimentacao.belongsTo(Usuario, { foreignKey: "resolvidoPorId", as: "resolvidoPor" });
+GastoVariavel.belongsTo(Usuario, { foreignKey: "usuarioId", as: "usuario" });
+GastoVariavel.belongsTo(Veiculo, { foreignKey: "veiculoId", as: "veiculo" });
+GastoVariavel.belongsTo(Loja, { foreignKey: "lojaId", as: "loja" });
+Usuario.hasMany(GastoVariavel, { foreignKey: "usuarioId", as: "gastosVariaveis" });
+Veiculo.hasMany(GastoVariavel, { foreignKey: "veiculoId", as: "gastosVariaveis" });
 import { sequelize } from "../database/connection.js";
 
 // Associação Manutencao <-> Maquina
@@ -261,6 +282,11 @@ WhatsappAviso.belongsTo(WhatsappDestinatario, { foreignKey: "destinatarioId", as
 LancamentoFinanceiro.belongsTo(Usuario, { foreignKey: "criadoPorId", as: "criadoPor", constraints: false });
 
 export {
+  AlertaMovimentacao,
+  GastoVariavel,
+  RegistroDinheiro,
+  MachinePayColetaPendente,
+  Sangria,
   ContaBancaria,
   ContaFinanceira,
   LancamentoFinanceiro,

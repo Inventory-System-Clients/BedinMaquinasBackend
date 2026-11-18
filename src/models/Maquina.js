@@ -147,6 +147,28 @@ const Maquina = sequelize.define(
       field: "machine_pay_pos_id",
       comment: "ID do POS (leitor PIX/cartão) cadastrado no painel Machine Pay",
     },
+    // Trazidos da AgarraMais (tela de Movimentações / Registrar Dinheiro).
+    // Colunas garantidas no boot por database/garantirColunas.js.
+    geradoraDinheiro: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: false,
+      field: "geradora_dinheiro",
+      comment: "Se ativo, a máquina aparece na lista do Registrar Dinheiro",
+    },
+    descontoAutomaticoMachinePay: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: false,
+      field: "desconto_automatico_machine_pay",
+      comment: "Se ativo, sugere o Total Pré da próxima coleta descontando pulsos pagos via Machine Pay",
+    },
+    valorDescontoMachinePay: {
+      type: DataTypes.DECIMAL(10, 2),
+      allowNull: true,
+      field: "valor_desconto_machine_pay",
+      comment: "Valor em R$ de cada pulso/ficha liberado por pagamento na Machine Pay",
+    },
     machinePayUsrId: {
       type: DataTypes.STRING(50),
       allowNull: true,

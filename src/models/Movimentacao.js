@@ -191,6 +191,26 @@ const Movimentacao = sequelize.define(
       allowNull: true,
       field: "mediaFichasPremio",
     },
+    // --- Trazidos da AgarraMais (tela de Movimentações). Colunas garantidas
+    // no boot por database/garantirColunas.js.
+    origemTotalPre: {
+      type: DataTypes.STRING(20),
+      allowNull: true,
+      field: "origem_total_pre",
+      comment: "automatico | manual — como o Total Pré foi obtido (sugestão Machine Pay ou contagem)",
+    },
+    valorFichaUnitario: {
+      type: DataTypes.DECIMAL(10, 2),
+      allowNull: true,
+      field: "valor_ficha_unitario",
+      comment: "Valor da ficha na hora da coleta (snapshot para o histórico)",
+    },
+    retiradaProduto: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      field: "retirada_produto",
+      comment: "Unidades retiradas da máquina sem venda (null = movimentação do fluxo antigo)",
+    },
     createdAt: {
       type: DataTypes.DATE,
       allowNull: false,
@@ -209,6 +229,18 @@ const Movimentacao = sequelize.define(
     timestamps: true,
     hooks: {
       beforeSave: async (movimentacao) => {
+        // Movimentação da tela de Movimentações (padrão AgarraMais): retiradaProduto
+        // vem preenchido (0 ou mais) e totalPos = totalPre + abastecidas - retirada.
+        if (movimentacao.retiradaProduto !== null && movimentacao.retiradaProduto !== undefined) {
+          movimentacao.totalPos = Math.max(
+            0,
+            (movimentacao.totalPre || 0) +
+              (movimentacao.abastecidas || 0) -
+              (movimentacao.retiradaProduto || 0),
+          );
+          return;
+        }
+        // Fluxo antigo (roteiros): mantém a regra que já existia.
         // Corrige cálculo para movimentações normais (não retirada de estoque)
         if (!movimentacao.retiradaEstoque) {
           movimentacao.totalPos =

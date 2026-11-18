@@ -123,6 +123,9 @@ export const criarMaquina = async (req, res) => {
       localizacao,
       machinePayPosId,
       machinePayUsrId,
+      geradoraDinheiro,
+      descontoAutomaticoMachinePay,
+      valorDescontoMachinePay,
     } = req.body;
 
     if (!codigo || !lojaId) {
@@ -175,6 +178,12 @@ export const criarMaquina = async (req, res) => {
       localizacao,
       machinePayPosId: machinePayPosId || null,
       machinePayUsrId: machinePayUsrIdFinal,
+      geradoraDinheiro: Boolean(geradoraDinheiro),
+      descontoAutomaticoMachinePay: Boolean(descontoAutomaticoMachinePay),
+      valorDescontoMachinePay:
+        valorDescontoMachinePay !== undefined && valorDescontoMachinePay !== ""
+          ? valorDescontoMachinePay
+          : null,
     });
 
     res.locals.entityId = maquina.id;
@@ -214,6 +223,9 @@ export const atualizarMaquina = async (req, res) => {
       ativo,
       machinePayPosId,
       machinePayUsrId,
+      geradoraDinheiro,
+      descontoAutomaticoMachinePay,
+      valorDescontoMachinePay,
     } = req.body;
 
     // Verificar se novo código já existe em outra máquina
@@ -270,6 +282,13 @@ export const atualizarMaquina = async (req, res) => {
       ativo: ativo ?? maquina.ativo,
       machinePayPosId: machinePayPosId ?? maquina.machinePayPosId,
       machinePayUsrId: machinePayUsrIdFinal,
+      geradoraDinheiro: geradoraDinheiro ?? maquina.geradoraDinheiro,
+      descontoAutomaticoMachinePay:
+        descontoAutomaticoMachinePay ?? maquina.descontoAutomaticoMachinePay,
+      valorDescontoMachinePay:
+        valorDescontoMachinePay === ""
+          ? null
+          : valorDescontoMachinePay ?? maquina.valorDescontoMachinePay,
     });
 
     res.json(maquina);
