@@ -11,6 +11,7 @@ import {
   buscarValorDigitalMachinePay,
   sugerirTotalPre,
   saidasCompactPayDesdeUltimaMovimentacao,
+  resumoMaquinaMovimentacao,
 } from "../controllers/movimentacaoController.js";
 import {
   autenticar,
@@ -24,6 +25,7 @@ router.get("/", autenticar, listarMovimentacoes);
 router.get("/pendentes-financeiro", autenticar, listarPendentesFinanceiro);
 // Tela de Movimentações (padrão AgarraMais)
 router.get("/sugestao-total-pre/:maquinaId", autenticar, sugerirTotalPre);
+router.get("/resumo-maquina/:maquinaId", autenticar, resumoMaquinaMovimentacao);
 router.get(
   "/saidas-compactpay/:maquinaId",
   autenticar,

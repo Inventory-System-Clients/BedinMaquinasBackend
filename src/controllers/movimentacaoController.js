@@ -9,6 +9,7 @@ import {
   RoteiroLoja,
   Roteiro,
   CarrinhoUsuario,
+  ContaFinanceira,
   sequelize,
 } from "../models/index.js";
 import { Op } from "sequelize";
@@ -25,7 +26,7 @@ export const registrarMovimentacao = async (req, res) => {
     const {
       maquinaId,
       dataColeta,
-      totalPre,
+      totalPre: totalPreBody,
       abastecidas,
       fichas,
       contadorMaquina,
@@ -50,19 +51,60 @@ export const registrarMovimentacao = async (req, res) => {
       machinePayDataInicio,
       // Tela de Movimentações (padrão AgarraMais): "automatico" | "manual"
       origemTotalPre,
+      // Tela de Movimentações simplificada: ninguém conta o que tem dentro da
+      // máquina. O totalPre sai do contador OUT (prêmios que saíram desde a
+      // última movimentação) e o operador só informa o que abasteceu.
+      modoSimples,
+      // [{ descricao, valor }] — cada um vira conta a pagar já paga na Gestão de Contas.
+      gastosExtras,
     } = req.body;
 
     // Validações
-    if (!maquinaId || totalPre === undefined || abastecidas === undefined) {
+    if (!maquinaId || (!modoSimples && totalPreBody === undefined) || abastecidas === undefined) {
       return res.status(400).json({
         error: "maquinaId, totalPre e abastecidas são obrigatórios",
       });
     }
+
+    const gastosExtrasNormalizados = [];
+    if (gastosExtras !== undefined && gastosExtras !== null) {
+      if (!Array.isArray(gastosExtras)) {
+        return res.status(400).json({ error: "gastosExtras deve ser uma lista" });
+      }
+      for (const gasto of gastosExtras) {
+        const descricao = String(gasto?.descricao || "").trim();
+        const valor = Math.round(Number(gasto?.valor) * 100) / 100;
+        if (!descricao && !(valor > 0)) continue; // linha em branco
+        if (!descricao || !(valor > 0)) {
+          return res.status(400).json({
+            error: "Cada gasto extra precisa de descrição e de um valor maior que zero.",
+          });
+        }
+        gastosExtrasNormalizados.push({ descricao: descricao.slice(0, 200), valor });
+      }
+    }
+    const valorGastosExtras = gastosExtrasNormalizados.length
+      ? Math.round(gastosExtrasNormalizados.reduce((s, g) => s + g.valor, 0) * 100) / 100
+      : null;
+
     // Buscar última movimentação para calcular saída (sairam)
     const ultimaMov = await Movimentacao.findOne({
       where: { maquinaId },
       order: [["dataColeta", "DESC"]],
     });
+
+    let totalPre = totalPreBody;
+    if (modoSimples) {
+      const outAtual = parseInt(contadorOut);
+      const outAnterior = ultimaMov?.contadorOut;
+      const saidaPeloContador =
+        Number.isFinite(outAtual) && typeof outAnterior === "number" && outAtual >= outAnterior
+          ? outAtual - outAnterior
+          : 0;
+      totalPre = ultimaMov && typeof ultimaMov.totalPos === "number"
+        ? Math.max(0, ultimaMov.totalPos - saidaPeloContador)
+        : 0;
+    }
 
     let saidaRecalculada = 0;
     if (ultimaMov && typeof ultimaMov.totalPos === "number") {
@@ -148,10 +190,16 @@ export const registrarMovimentacao = async (req, res) => {
     // período precisa vir explicitamente em `machinePayDataInicio` (o
     // frontend deve perguntar essa data ao usuário quando
     // `machinePayPrecisaDataInicio` vier true em GET /maquinas/:id/estoque-atual).
+    // A tela de Movimentações deixa o operador trocar o início do período (ex.:
+    // máquina sem movimentação anterior, ou período diferente): quando vem
+    // `machinePayDataInicio`, ele vale; senão, a data da última movimentação.
     let valorEntradaCartao = null;
-    const inicioConsultaDigital = ultimaMov
-      ? ultimaMov.dataColeta
-      : machinePayDataInicio || null;
+    const inicioManualValido =
+      machinePayDataInicio && !Number.isNaN(new Date(machinePayDataInicio).getTime())
+        ? new Date(machinePayDataInicio)
+        : null;
+    const inicioConsultaDigital =
+      inicioManualValido || (ultimaMov ? ultimaMov.dataColeta : null);
 
     console.log("[MachinePay] Verificando busca automática do valor digital:", {
       maquinaId,
@@ -356,12 +404,15 @@ export const registrarMovimentacao = async (req, res) => {
     }
 
     // Calcular valor faturado: fichas + notas + digital
-    const valorFaturado =
-      (fichas ? fichas * parseFloat(maquina.valorFicha) : 0) +
-      (quantidade_notas_entrada ? parseFloat(quantidade_notas_entrada) : 0) +
-      (valor_entrada_maquininha_pix
-        ? parseFloat(valor_entrada_maquininha_pix)
-        : 0);
+    // Na tela simplificada o faturamento é o dinheiro retirado + o que entrou
+    // na Machine Pay no período.
+    const valorFaturado = modoSimples
+      ? (parseFloat(valorEntradaNotas) || 0) + (parseFloat(valorEntradaCartao) || 0)
+      : (fichas ? fichas * parseFloat(maquina.valorFicha) : 0) +
+        (quantidade_notas_entrada ? parseFloat(quantidade_notas_entrada) : 0) +
+        (valor_entrada_maquininha_pix
+          ? parseFloat(valor_entrada_maquininha_pix)
+          : 0);
 
     console.log("📝 [registrarMovimentacao] Criando movimentação:", {
       maquinaId,
@@ -373,6 +424,11 @@ export const registrarMovimentacao = async (req, res) => {
       fichas: fichas || 0,
       valorFaturado,
     });
+
+    // Movimentação e contas dos gastos extras entram juntas (ou nenhuma entra).
+    if (!lockTransaction && gastosExtrasNormalizados.length) {
+      lockTransaction = await sequelize.transaction();
+    }
 
     // Criar movimentação
     const movimentacao = await Movimentacao.create({
@@ -410,7 +466,37 @@ export const registrarMovimentacao = async (req, res) => {
           : null,
       valorFichaUnitario: parseFloat(maquina.valorFicha) || 0,
       retiradaProduto: retiradaProdutoTotal,
+      valorGastosExtras,
+      machinePayInicio:
+        valorEntradaCartao !== null && inicioConsultaDigital ? inicioConsultaDigital : null,
     }, lockTransaction ? { transaction: lockTransaction } : undefined);
+
+    // Gastos extras da movimentação → Gestão de Contas, como conta a pagar já
+    // paga (vencimento e quitação no dia da coleta, horário de Brasília).
+    let contasGastosExtras = [];
+    if (gastosExtrasNormalizados.length) {
+      const diaColeta = new Intl.DateTimeFormat("en-CA", {
+        timeZone: "America/Sao_Paulo",
+      }).format(new Date(dataColetaFinal));
+      const nomeMaquina = maquina.nome || maquina.codigo || "Máquina";
+      contasGastosExtras = await ContaFinanceira.bulkCreate(
+        gastosExtrasNormalizados.map((gasto) => ({
+          tipo: "PAGAR",
+          descricao: `${gasto.descricao} — ${nomeMaquina} (${loja.nome})`.slice(0, 255),
+          categoria: "Gastos de movimentação",
+          centroCusto: loja.nome?.slice(0, 120) || null,
+          valor: gasto.valor,
+          vencimento: diaColeta,
+          status: "QUITADA",
+          dataQuitacao: diaColeta,
+          valorQuitado: gasto.valor,
+          observacao: `Lançado na movimentação da máquina ${nomeMaquina} por ${req.usuario.nome || "usuário"}.`,
+          criadoPorId: req.usuario.id,
+          movimentacaoId: movimentacao.id,
+        })),
+        lockTransaction ? { transaction: lockTransaction } : undefined,
+      );
+    }
 
     // Nova coleta: o acumulado da Machine Pay preservado antes de fechamentos
     // (Registrar Dinheiro) já foi considerado; zera para o próximo ciclo.
@@ -460,56 +546,8 @@ export const registrarMovimentacao = async (req, res) => {
 
       await MovimentacaoProduto.bulkCreate(detalhesProdutos);
 
-      // Descontar do estoque da loja os produtos abastecidos
-      for (const produto of produtosNormalizados) {
-        if (produto.quantidadeAbastecida && produto.quantidadeAbastecida > 0) {
-          console.log(
-            "🏪 [registrarMovimentacao] Atualizando estoque da loja:",
-            {
-              lojaId: maquina.lojaId,
-              produtoId: produto.produtoId,
-              quantidadeAbastecida: produto.quantidadeAbastecida,
-            },
-          );
-
-          // Buscar estoque do produto na loja da máquina
-          const estoqueLoja = await EstoqueLoja.findOne({
-            where: {
-              lojaId: maquina.lojaId,
-              produtoId: produto.produtoId,
-            },
-          });
-
-          if (estoqueLoja) {
-            const quantidadeAnterior = estoqueLoja.quantidade;
-            // Descontar a quantidade abastecida (não permite ficar negativo)
-            const novaQuantidade = Math.max(
-              0,
-              estoqueLoja.quantidade - produto.quantidadeAbastecida,
-            );
-
-            console.log(
-              "📦 [registrarMovimentacao] Estoque da loja atualizado:",
-              {
-                produtoId: produto.produtoId,
-                quantidadeAnterior,
-                quantidadeAbastecida: produto.quantidadeAbastecida,
-                novaQuantidade,
-              },
-            );
-
-            await estoqueLoja.update({ quantidade: novaQuantidade });
-          } else {
-            console.log(
-              "⚠️ [registrarMovimentacao] Estoque da loja não encontrado:",
-              {
-                lojaId: maquina.lojaId,
-                produtoId: produto.produtoId,
-              },
-            );
-          }
-        }
-      }
+      // Sem controle de estoque: os produtos cadastrados podem ser usados à
+      // vontade, abastecer não desconta mais nada do estoque da loja.
 
       // ============================================
       // DESCONTAR PRODUTOS DO CARRINHO DO USUÁRIO
@@ -922,6 +960,13 @@ export const deletarMovimentacao = async (req, res) => {
     }
 
     await movimentacao.destroy();
+
+    // Gastos extras lançados nesta movimentação saem da Gestão de Contas junto.
+    try {
+      await ContaFinanceira.destroy({ where: { movimentacaoId: movimentacao.id } });
+    } catch (erroContas) {
+      console.error("Erro ao remover gastos extras da movimentação apagada:", erroContas);
+    }
 
     res.json({ message: "Movimentação deletada com sucesso" });
   } catch (error) {
@@ -1377,4 +1422,79 @@ export const sugerirTotalPre = async (req, res) => {
 // O Bedin não usa CompactPay: responde "indisponível" para a tela não tentar conferir.
 export const saidasCompactPayDesdeUltimaMovimentacao = async (req, res) => {
   res.json({ disponivel: false, motivo: "compactpay_nao_usado" });
+};
+// GET /movimentacoes/resumo-maquina/:maquinaId?inicio=ISO
+// Tela de Movimentações: dados da última movimentação (contadores, quanto ficou
+// na máquina) e quanto entrou na Machine Pay de `inicio` até agora. Sem `inicio`,
+// o período começa na última movimentação; sem movimentação anterior, o
+// operador precisa escolher a data (precisaDataInicio).
+export const resumoMaquinaMovimentacao = async (req, res) => {
+  try {
+    const maquina = await Maquina.findByPk(req.params.maquinaId);
+    if (!maquina) {
+      return res.status(404).json({ error: "Máquina não encontrada" });
+    }
+
+    const ultimaMov = await Movimentacao.findOne({
+      where: { maquinaId: maquina.id },
+      order: [["dataColeta", "DESC"]],
+      attributes: ["id", "dataColeta", "contadorIn", "contadorOut", "totalPos"],
+    });
+
+    const inicioQuery = req.query.inicio ? new Date(req.query.inicio) : null;
+    if (inicioQuery && Number.isNaN(inicioQuery.getTime())) {
+      return res.status(400).json({ error: "Data de início inválida" });
+    }
+    const inicioPadrao = ultimaMov?.dataColeta || null;
+    const inicio = inicioQuery || inicioPadrao;
+    const fim = new Date();
+
+    const resposta = {
+      ultimaMovimentacao: ultimaMov
+        ? {
+            dataColeta: ultimaMov.dataColeta,
+            contadorIn: ultimaMov.contadorIn,
+            contadorOut: ultimaMov.contadorOut,
+            totalPos: ultimaMov.totalPos,
+          }
+        : null,
+      machinePay: {
+        configurada: Boolean(maquina.machinePayPosId),
+        inicioPadrao,
+        inicio,
+        fim,
+        precisaDataInicio: !inicio,
+        valor: null,
+        erro: null,
+      },
+    };
+
+    if (!maquina.machinePayPosId || !inicio) {
+      return res.json(resposta);
+    }
+    if (inicio > fim) {
+      resposta.machinePay.erro = "A data de início não pode ser no futuro.";
+      return res.json(resposta);
+    }
+
+    try {
+      const { consultarFechamentoMachinePay } = await import(
+        "../services/machinePayService.js"
+      );
+      const fechamento = await consultarFechamentoMachinePay({
+        posId: maquina.machinePayPosId,
+        inicio,
+        fim,
+      });
+      resposta.machinePay.valor = Number(fechamento?.cartaoPix) || 0;
+    } catch (erroMachinePay) {
+      console.error("[MachinePay] Erro no resumo da máquina:", erroMachinePay.message);
+      resposta.machinePay.erro = "Não foi possível consultar a Machine Pay agora.";
+    }
+
+    return res.json(resposta);
+  } catch (error) {
+    console.error("Erro ao montar resumo da máquina:", error);
+    res.status(500).json({ error: "Erro ao buscar dados da máquina" });
+  }
 };

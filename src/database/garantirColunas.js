@@ -12,6 +12,11 @@ const COLUNAS = [
   ["maquinas", "geradora_dinheiro", "BOOLEAN NOT NULL DEFAULT false"],
   ["maquinas", "desconto_automatico_machine_pay", "BOOLEAN NOT NULL DEFAULT false"],
   ["maquinas", "valor_desconto_machine_pay", "DECIMAL(10,2)"],
+  // Movimentação simplificada: gastos extras (viram contas a pagar já pagas) e o
+  // início do período usado para somar o que entrou na Machine Pay.
+  ["movimentacoes", "valor_gastos_extras", "DECIMAL(10,2)"],
+  ["movimentacoes", "machine_pay_inicio", "TIMESTAMP WITH TIME ZONE"],
+  ["gestao_contas", "movimentacao_id", "UUID"],
 ];
 
 export async function garantirColunas() {

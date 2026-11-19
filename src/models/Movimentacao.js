@@ -211,6 +211,18 @@ const Movimentacao = sequelize.define(
       field: "retirada_produto",
       comment: "Unidades retiradas da máquina sem venda (null = movimentação do fluxo antigo)",
     },
+    valorGastosExtras: {
+      type: DataTypes.DECIMAL(10, 2),
+      allowNull: true,
+      field: "valor_gastos_extras",
+      comment: "Soma dos gastos extras lançados na movimentação (cada um vira conta a pagar já paga na Gestão de Contas)",
+    },
+    machinePayInicio: {
+      type: DataTypes.DATE,
+      allowNull: true,
+      field: "machine_pay_inicio",
+      comment: "Início do período somado na Machine Pay (valorEntradaCartao) — até a dataColeta",
+    },
     createdAt: {
       type: DataTypes.DATE,
       allowNull: false,

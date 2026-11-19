@@ -64,6 +64,8 @@ export const ContaFinanceira = sequelize.define(
     grupoParcelasId: { type: DataTypes.UUID, allowNull: true },
     recorrente: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
     criadoPorId: { type: DataTypes.UUID, allowNull: true },
+    // Gasto extra lançado numa movimentação (sai junto se a movimentação for apagada).
+    movimentacaoId: { type: DataTypes.UUID, allowNull: true },
   },
   {
     tableName: "gestao_contas",
